@@ -1,0 +1,278 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------
+// Platforms & accounts
+// ---------------------------------------------------------------------
+
+model Platform {
+  id        String   @id @default(cuid())
+  key       String   @unique // "depop" | "facebook" | "ebay" | ...
+  name      String
+  kind      String   @default("mock") // "mock" | "real"
+  createdAt DateTime @default(now())
+
+  accounts PlatformAccount[]
+  expenses Expense[]
+}
+
+model PlatformAccount {
+  id                 String   @id @default(cuid())
+  platformId         String
+  platform           Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  externalAccountId  String
+  label              String // user-facing name, e.g. "Reselling #1"
+  profileUrl         String?
+  status             String   @default("DISCONNECTED") // CONNECTED | DISCONNECTED | AUTH_REQUIRED
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  watchdog      Watchdog?
+  listings      Listing[]
+  conversations Conversation[]
+  offers        Offer[]
+  orders        Order[]
+  events        Event[]
+  expenses      Expense[]
+
+  @@unique([platformId, externalAccountId])
+}
+
+// ---------------------------------------------------------------------
+// Watchdogs
+// ---------------------------------------------------------------------
+
+model Watchdog {
+  id                String          @id @default(cuid())
+  platformAccountId String          @unique
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  state             String          @default("STOPPED") // RUNNING | STOPPED | ERROR | AUTH_REQUIRED | STALE
+  lastSuccessAt     DateTime?
+  lastEventAt       DateTime?
+  lastError         String?
+  intervalMs        Int             @default(30000)
+  updatedAt         DateTime        @updatedAt
+}
+
+// ---------------------------------------------------------------------
+// Inventory & listings
+// ---------------------------------------------------------------------
+
+model InventoryItem {
+  id            String    @id @default(cuid())
+  sku           String?   @unique
+  title         String
+  description   String?
+  category      String?
+  brand         String?
+  purchaseCost  Float?
+  purchaseDate  DateTime?
+  condition     String?
+  location      String?
+  notes         String?
+  status        String    @default("INVENTORY")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  listings Listing[]
+  expenses Expense[]
+}
+
+model Listing {
+  id                String          @id @default(cuid())
+  inventoryItemId   String?
+  inventoryItem     InventoryItem?  @relation(fields: [inventoryItemId], references: [id])
+  platformAccountId String
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  externalListingId String
+  title             String
+  price             Float
+  currency          String          @default("USD")
+  status            String          @default("ACTIVE") // DRAFT | ACTIVE | SOLD | REMOVED — mirrors what the platform itself reports
+  // Cross-listing awareness (spec section 10): true when this same
+  // InventoryItem sold through a DIFFERENT listing/platform while this one
+  // is still platform-status ACTIVE. Independent of `status` so a routine
+  // sync doesn't silently clear it — only resolved when the platform status
+  // itself changes away from ACTIVE (the user actually delisted it) or the
+  // user dismisses it manually.
+  needsDelisting    Boolean         @default(false)
+  url               String?
+  views             Int?
+  likes             Int?
+  watchers          Int?
+  offerCount        Int?
+  messageCount      Int?
+  metadataJson      String? // platform-specific extras that don't fit the normalized model
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  conversations Conversation[]
+  offers        Offer[]
+  orders        Order[]
+
+  @@unique([platformAccountId, externalListingId])
+}
+
+// ---------------------------------------------------------------------
+// Messaging
+// ---------------------------------------------------------------------
+
+model Conversation {
+  id                    String          @id @default(cuid())
+  platformAccountId     String
+  platformAccount       PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  listingId             String?
+  listing               Listing?        @relation(fields: [listingId], references: [id])
+  externalConversationId String
+  buyerName             String
+  lastMessageAt         DateTime
+  unread                Boolean         @default(true)
+  archived              Boolean         @default(false)
+  createdAt             DateTime        @default(now())
+
+  messages Message[]
+
+  @@unique([platformAccountId, externalConversationId])
+}
+
+model Message {
+  id               String       @id @default(cuid())
+  conversationId   String
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  externalMessageId String
+  senderName       String
+  body             String
+  direction        String // INBOUND | OUTBOUND
+  sentAt           DateTime
+
+  @@unique([conversationId, externalMessageId])
+}
+
+// ---------------------------------------------------------------------
+// Offers, orders, sales, shipments
+// ---------------------------------------------------------------------
+
+model Offer {
+  id                String          @id @default(cuid())
+  listingId         String
+  listing           Listing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  platformAccountId String
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  externalOfferId   String
+  buyerName         String
+  amount            Float
+  currency          String          @default("USD")
+  status            String          @default("PENDING") // PENDING | ACCEPTED | DECLINED | EXPIRED | COUNTERED
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([platformAccountId, externalOfferId])
+}
+
+model Order {
+  id                String          @id @default(cuid())
+  listingId         String
+  listing           Listing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  platformAccountId String
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  externalOrderId   String
+  buyerName         String
+  status            String          @default("CREATED") // CREATED | PAID | SHIPPED | DELIVERED | CANCELLED | REFUNDED
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  sale      Sale?
+  shipments Shipment[]
+
+  @@unique([platformAccountId, externalOrderId])
+}
+
+model Sale {
+  id               String   @id @default(cuid())
+  orderId          String   @unique
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  salePrice        Float
+  purchaseCost     Float    @default(0)
+  platformFees     Float    @default(0)
+  paymentFees      Float    @default(0)
+  shippingCost     Float    @default(0)
+  shippingRevenue  Float    @default(0)
+  discount         Float    @default(0)
+  refundAmount     Float    @default(0)
+  otherCosts       Float    @default(0)
+  netProfit        Float
+  profitMargin     Float // netProfit / salePrice
+  currency         String   @default("USD")
+  soldAt           DateTime
+
+  @@index([soldAt])
+}
+
+model Shipment {
+  id             String   @id @default(cuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  carrier        String?
+  trackingNumber String?
+  status         String   @default("CREATED") // CREATED | IN_TRANSIT | DELIVERED | RETURNED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------
+// Expenses
+// ---------------------------------------------------------------------
+
+model Expense {
+  id                String           @id @default(cuid())
+  amount            Float
+  date              DateTime
+  category          String
+  description       String?
+  platformId        String?
+  platform          Platform?        @relation(fields: [platformId], references: [id])
+  platformAccountId String?
+  platformAccount   PlatformAccount? @relation(fields: [platformAccountId], references: [id])
+  inventoryItemId   String?
+  inventoryItem     InventoryItem?   @relation(fields: [inventoryItemId], references: [id])
+  receiptPath       String?
+  createdAt         DateTime         @default(now())
+}
+
+// ---------------------------------------------------------------------
+// Events, notifications
+// ---------------------------------------------------------------------
+
+model Event {
+  id                String          @id @default(cuid())
+  type              String
+  platformAccountId String
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  entityId          String
+  dedupeKey         String          @unique
+  timestamp         DateTime
+  payloadJson       String
+  createdAt         DateTime        @default(now())
+
+  notifications Notification[]
+
+  @@index([timestamp])
+  @@index([type])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  eventId   String
+  event     Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  channel   String // "discord" | "desktop"
+  status    String    @default("PENDING") // PENDING | SENT | FAILED
+  error     String?
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+}
