@@ -5,3 +5,5 @@ export { MockDepopConnector } from "./mock/depop.js";
 export { MockFacebookConnector } from "./mock/facebook.js";
 export { MockEbayConnector } from "./mock/ebay.js";
 export { DepopBrowserConnector } from "./browser/depopBrowserConnector.js";
+export { FacebookBrowserConnector } from "./browser/facebookBrowserConnector.js";
+export { openLoginWindow, hasSavedSession } from "./browser/browserSession.js";

@@ -76,7 +76,8 @@ Watchdog.
 10. Discord notifications — **done** (desktop notifications also done, ahead of Phase 17 numbering)
 11. Watchdog manager UI + health center — **done**
 12. Real connector #1 (Depop, listings-only) — **done**
-13. Real connector #2+ — not started
+13. Real connector #2+ (Facebook) — infrastructure done, blocked on live
+    login (see below) — not yet a working scraper
 
 Phases 1–6 reached a runnable, demo-able vertical slice: mock data flows
 end-to-end from connector → event engine (with working dedup) → DB →
@@ -223,6 +224,75 @@ hammering a real site), which would have made every real account flap to
 STALE between syncs; the default staleness threshold now scales with the
 account's interval (4×) instead of a fixed constant. One-time local setup:
 `npx playwright install chromium` (documented in README.md).
+
+**Phase 13 (real connector #2 — Facebook)**: live research first, same as
+Depop. Finding: Facebook exposes *no* public seller data at all — a
+logged-out item page shows no seller name, no profile link, nothing in the
+DOM (confirmed live). Depop's public `/username/` shop page has no
+equivalent here; every path to "your own listings" sits behind login. So
+unlike Depop, there was no way to build and self-verify a working scraper
+in this session — writing one anyway would mean guessing at authenticated
+page structure, which the spec explicitly forbids ("do not create fake
+integrations and pretend they are functional").
+
+Given that, and the user's explicit choice to proceed with real login
+rather than defer or accept unverified code: built the actual
+infrastructure this needs — `packages/connectors/src/browser/
+browserSession.ts` manages a persistent Playwright profile per account;
+`POST /api/accounts/:id/login-window` opens a **real, visible** browser
+window at Facebook's own login page for the user to log into themselves
+(a `Log in` button on the Accounts page, honest status shown: "Not logged
+in" / "Waiting for login…" / "Session saved"). The app never sees or
+stores a password — only the session cookies Chromium itself writes to
+that profile as the user interacts, reused headlessly afterward.
+`FacebookBrowserConnector` is registered and wired end-to-end (platform
+seeded, health check genuinely checks a saved session against the live
+site) but honestly ships with `supportedCapabilities: []` — no scraper
+methods yet, since those need the real logged-in DOM to build against.
+
+**Hit a real environment wall verifying the login window itself**: calling
+the endpoint failed with `spawn UNKNOWN`. Diagnosed thoroughly rather than
+guessing — confirmed headless Chromium still launches fine (ruling out a
+Playwright/Chromium install problem), confirmed a raw `child_process.spawn`
+of the same binary fails identically (ruling out a Playwright-specific
+bug), and confirmed the failure is identical via both Bash and PowerShell
+tool calls. Conclusion: the sandboxed environment this session's tool
+calls execute through can spawn *headless* processes but not ones that
+open a real GUI window — a restriction on this tool session, not a defect
+in the app. The code is very likely correct and should work when the user
+runs `npm run dev` themselves from their own terminal, in their own normal
+desktop session — that's genuinely untested by me, not verified-working,
+and is the concrete next step: run it locally, click "Log in" on the
+Facebook (Live) account, and report back either way so this can be
+finished (or debugged for real, if it turns out not to be purely a sandbox
+issue).
+
+**Update — user tested it**: the sandbox theory was confirmed (a real
+window opened from the user's own terminal, and they logged in), but two
+real bugs surfaced: (1) the "is a window still open" tracking relied on
+Playwright's `close` event, which doesn't reliably fire when a persistent-
+context window is closed via Windows' own title bar — when it didn't fire,
+the flag stuck `true` forever, which both permanently disabled the "Log
+in" button (matches "wasn't always working") and hard-coded the status
+display to "waiting" regardless of actual login state (matches "didn't
+update"). Fixed by removing that in-memory flag entirely — `openLoginWindow`
+no longer tracks open/closed state at all and just lets Chromium's own
+profile lock throw naturally if a window is already open on that profile;
+`GET /login-status` now calls the connector's real `healthCheck()` against
+the live site instead of guessing from the filesystem. (2) The old status
+endpoint called the filesystem heuristic unconditionally for every
+account regardless of platform, which is how several unrelated accounts —
+including mock ones — ended up with harmless empty `.browser-profiles/`
+directories as a side effect.
+
+**Still unresolved**: after the user's test, `apps/server/.browser-profiles/
+<their account id>/` was completely empty on disk — no Chromium profile
+data at all, despite them seeing a real window and completing login. Not
+yet explained. Asked the user to retry with the fixed code (their running
+`tsx watch`/Vite dev server should have already picked up the fix live)
+and report what the status shows after actually closing the login window
+— this is exactly where the session paused for the day, mid-investigation,
+not resolved.
 
 Phases 7+ are substantial features in their own right and will be built in
 follow-up sessions, reviewed incrementally rather than dumped in one pass.

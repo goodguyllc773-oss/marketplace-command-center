@@ -105,11 +105,11 @@ export default function Accounts() {
               className="w-48 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
             />
           </Field>
-          <Field label={selectedPlatform?.kind === "browser" ? "Depop username" : "External account id"}>
+          <Field label={selectedPlatform?.key === "depop-live" ? "Depop username" : "External account id"}>
             <input
               value={form.externalAccountId}
               onChange={(e) => setForm((f) => ({ ...f, externalAccountId: e.target.value }))}
-              placeholder={selectedPlatform?.kind === "browser" ? "e.g. vintage" : "internal identifier"}
+              placeholder={selectedPlatform?.key === "depop-live" ? "e.g. vintage" : "internal identifier"}
               className="w-48 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
             />
           </Field>
@@ -121,11 +121,21 @@ export default function Accounts() {
             Add
           </button>
         </form>
-        {selectedPlatform?.kind === "browser" && (
+        {selectedPlatform?.key === "depop-live" && (
           <p className="mt-2 text-xs text-slate-500">
             Reads your Depop shop's public listings only — no login, no password. Listings capability only for now;
             messages/offers need a real login session and aren't built yet. Syncs gently (every 5 min by default) out
             of respect for the real site.
+          </p>
+        )}
+        {selectedPlatform?.key === "facebook-live" && (
+          <p className="mt-2 text-xs text-slate-500">
+            Needs your own Facebook login — after adding the account, click "Log in" below to open a real browser
+            window and sign in yourself, then <strong>close that window</strong> when you're done (the app checks the
+            saved session afterward — while the window's still open it can't peek at the same profile). This app
+            never sees or stores your password, only the resulting session. Currently a verified connection check
+            only — actual listings/messages come once that login is in place and the real pages can be inspected.
+            Any label works for "External account id" (e.g. "primary").
           </p>
         )}
         {createMutation.isError && (
@@ -155,20 +165,69 @@ export default function Accounts() {
                   <div className="text-xs text-slate-500">{acc.status}</div>
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  if (confirm(`Remove ${acc.platform.name} / ${acc.label}? This stops its watchdog too.`)) {
-                    removeMutation.mutate(acc.id);
-                  }
-                }}
-                className="rounded-md border border-rose-800 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-950"
-              >
-                Remove
-              </button>
+              <div className="flex items-center gap-2">
+                <LoginControl accountId={acc.id} />
+                <button
+                  onClick={() => {
+                    if (confirm(`Remove ${acc.platform.name} / ${acc.label}? This stops its watchdog too.`)) {
+                      removeMutation.mutate(acc.id);
+                    }
+                  }}
+                  className="rounded-md border border-rose-800 px-2.5 py-1 text-xs font-medium text-rose-300 hover:bg-rose-950"
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           ))}
         </div>
       </Card>
+    </div>
+  );
+}
+
+function LoginControl({ accountId }: { accountId: string }) {
+  const qc = useQueryClient();
+  const statusQuery = useQuery({
+    queryKey: ["login-status", accountId],
+    queryFn: () => api.accounts.loginStatus(accountId),
+    refetchInterval: 10_000,
+  });
+  const invalidateStatus = () => qc.invalidateQueries({ queryKey: ["login-status", accountId] });
+  const openMutation = useMutation({
+    mutationFn: () => api.accounts.openLoginWindow(accountId),
+    // A window can take the user a while to log into — re-check a few
+    // seconds later rather than immediately (the profile is still busy).
+    onSuccess: () => setTimeout(invalidateStatus, 3000),
+  });
+
+  const status = statusQuery.data;
+  if (!status?.requiresLogin) return null;
+
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      {status.authenticated ? (
+        <span className="text-emerald-400">Logged in</span>
+      ) : status.everAttempted ? (
+        <span className="text-amber-400" title={status.message}>
+          Not logged in{status.message ? ` — ${status.message}` : ""}
+        </span>
+      ) : (
+        <span className="text-slate-500">Not logged in</span>
+      )}
+      <button onClick={() => statusQuery.refetch()} className="text-slate-500 hover:text-slate-300" title="Check now">
+        ↻
+      </button>
+      <button
+        onClick={() => openMutation.mutate()}
+        disabled={openMutation.isPending}
+        className="rounded-md border border-base-600 px-2.5 py-1 font-medium text-slate-300 hover:bg-base-700 disabled:opacity-50"
+      >
+        {status.everAttempted ? "Log in again" : "Log in"}
+      </button>
+      {openMutation.isError && (
+        <span className="text-rose-400">{openMutation.error instanceof Error ? openMutation.error.message : "Failed"}</span>
+      )}
     </div>
   );
 }

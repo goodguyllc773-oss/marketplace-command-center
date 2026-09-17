@@ -3,6 +3,7 @@ import { MockDepopConnector } from "./mock/depop.js";
 import { MockFacebookConnector } from "./mock/facebook.js";
 import { MockEbayConnector } from "./mock/ebay.js";
 import { DepopBrowserConnector } from "./browser/depopBrowserConnector.js";
+import { FacebookBrowserConnector, FACEBOOK_LOGIN_URL } from "./browser/facebookBrowserConnector.js";
 
 export type ConnectorKind = "mock" | "browser";
 
@@ -38,9 +39,18 @@ export function createMockConnector(
  */
 const BROWSER_FACTORIES: Record<string, (accountId: string, externalAccountId: string) => MarketplaceConnector> = {
   "depop-live": (accountId, externalAccountId) => new DepopBrowserConnector(accountId, externalAccountId),
+  "facebook-live": (accountId, externalAccountId) => new FacebookBrowserConnector(accountId, externalAccountId),
 };
 
 export const REAL_PLATFORM_IDS = Object.keys(BROWSER_FACTORIES);
+
+/** Platforms whose browser connector needs an interactive login (the user
+ * types their own credentials into a real, visible browser window — the
+ * app never sees them). Depop's `listings` capability needs no login at
+ * all, so it's absent here. */
+export const LOGIN_START_URLS: Record<string, string> = {
+  "facebook-live": FACEBOOK_LOGIN_URL,
+};
 
 export function createBrowserConnector(
   platformId: string,

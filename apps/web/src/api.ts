@@ -21,7 +21,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new ApiError(res.status, body || res.statusText);
+    let message = body || res.statusText;
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed?.error === "string") message = parsed.error;
+      else if (parsed?.error) message = JSON.stringify(parsed.error);
+    } catch {
+      // body wasn't JSON — use it as-is
+    }
+    throw new ApiError(res.status, message);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -347,6 +355,11 @@ export const api = {
       request<PlatformAccount>("/api/accounts", { method: "POST", body: JSON.stringify(data) }),
     remove: (id: string) => request<void>(`/api/accounts/${id}`, { method: "DELETE" }),
     sync: (id: string) => request<{ ok: boolean; newEvents: number; error?: string }>(`/api/accounts/${id}/sync`, { method: "POST" }),
+    openLoginWindow: (id: string) => request<{ ok: boolean }>(`/api/accounts/${id}/login-window`, { method: "POST" }),
+    loginStatus: (id: string) =>
+      request<{ requiresLogin: boolean; everAttempted: boolean; authenticated: boolean; message?: string }>(
+        `/api/accounts/${id}/login-status`,
+      ),
   },
 
   watchdogs: {

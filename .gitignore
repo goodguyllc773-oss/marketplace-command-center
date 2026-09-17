@@ -12,3 +12,8 @@ Thumbs.db
 apps/server/prisma/dev.db
 apps/server/prisma/dev.db-journal
 coverage/
+
+# Real browser-connector session profiles (Playwright persistent contexts) —
+# these hold live login cookies, never commit them under any circumstance.
+.browser-profiles/
+**/.browser-profiles/

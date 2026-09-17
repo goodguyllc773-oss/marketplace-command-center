@@ -8,6 +8,7 @@ const PLATFORM_NAMES: Record<string, string> = {
   facebook: "Facebook",
   ebay: "eBay",
   "depop-live": "Depop (Live)",
+  "facebook-live": "Facebook (Live)",
 };
 
 async function main() {
