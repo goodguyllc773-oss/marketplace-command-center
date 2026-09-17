@@ -3,21 +3,31 @@ import Dashboard from "./pages/Dashboard.js";
 import Inbox from "./pages/Inbox.js";
 import Inventory from "./pages/Inventory.js";
 import Listings from "./pages/Listings.js";
+import Sales from "./pages/Sales.js";
+import Expenses from "./pages/Expenses.js";
 import Accounts from "./pages/Accounts.js";
+import Watchdogs from "./pages/Watchdogs.js";
 import Activity from "./pages/Activity.js";
+import Settings from "./pages/Settings.js";
+import { DesktopNotificationWatcher } from "./DesktopNotificationWatcher.js";
 
 const NAV = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/inbox", label: "Inbox" },
   { to: "/inventory", label: "Inventory" },
   { to: "/listings", label: "Listings" },
-  { to: "/accounts", label: "Accounts & Watchdogs" },
+  { to: "/sales", label: "Sales" },
+  { to: "/expenses", label: "Expenses" },
+  { to: "/accounts", label: "Accounts" },
+  { to: "/watchdogs", label: "Watchdogs" },
   { to: "/activity", label: "Activity" },
+  { to: "/settings", label: "Settings" },
 ];
 
 export default function App() {
   return (
     <div className="flex min-h-screen">
+      <DesktopNotificationWatcher />
       <aside className="w-56 shrink-0 border-r border-base-700 bg-base-900 p-4">
         <div className="mb-6 px-2">
           <div className="text-sm font-semibold tracking-wide text-accent">MARKETPLACE</div>
@@ -46,8 +56,12 @@ export default function App() {
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/listings" element={<Listings />} />
+          <Route path="/sales" element={<Sales />} />
+          <Route path="/expenses" element={<Expenses />} />
           <Route path="/accounts" element={<Accounts />} />
+          <Route path="/watchdogs" element={<Watchdogs />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
     </div>

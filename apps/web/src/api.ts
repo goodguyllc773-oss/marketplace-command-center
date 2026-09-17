@@ -43,6 +43,7 @@ export interface Watchdog {
   lastEventAt: string | null;
   lastError: string | null;
   intervalMs: number;
+  staleAfterMs: number;
 }
 
 export interface PlatformAccount {
@@ -59,6 +60,16 @@ export interface RangeSummary {
   revenue: number;
   profit: number;
   itemsSold: number;
+  profitMargin: number;
+  avgSalePrice: number;
+  avgProfitPerItem: number;
+  costOfGoods: number;
+  platformFees: number;
+  paymentFees: number;
+  shippingNet: number;
+  discounts: number;
+  refunds: number;
+  expenses: number;
 }
 
 export interface DashboardSummary {
@@ -66,6 +77,7 @@ export interface DashboardSummary {
   week: RangeSummary;
   month: RangeSummary;
   allTime: RangeSummary;
+  custom: RangeSummary | null;
   unreadMessages: number;
   pendingOffers: number;
   activeListings: number;
@@ -95,6 +107,26 @@ export interface ActivityEvent {
   timestamp: string;
   payload: Record<string, unknown>;
   platformAccount: PlatformAccount;
+}
+
+export interface NotificationSettingRow {
+  eventType: string;
+  discordEnabled: boolean;
+}
+
+export interface NotificationSettingsResponse {
+  discordConfigured: boolean;
+  settings: NotificationSettingRow[];
+}
+
+export interface NotificationLogEntry {
+  id: string;
+  channel: string;
+  status: "PENDING" | "SENT" | "FAILED";
+  error: string | null;
+  sentAt: string | null;
+  createdAt: string;
+  event: ActivityEvent;
 }
 
 export interface ConversationListing {
@@ -218,6 +250,89 @@ export interface ListingFilters {
   q?: string;
 }
 
+export interface SaleOrderRef {
+  id: string;
+  externalOrderId: string;
+  buyerName: string;
+  status: string;
+  listing: { id: string; title: string; inventoryItemId: string | null };
+  platformAccount: PlatformAccount;
+}
+
+export interface Sale {
+  id: string;
+  orderId: string;
+  salePrice: number;
+  purchaseCost: number;
+  platformFees: number;
+  paymentFees: number;
+  shippingCost: number;
+  shippingRevenue: number;
+  discount: number;
+  refundAmount: number;
+  otherCosts: number;
+  netProfit: number;
+  profitMargin: number;
+  currency: string;
+  soldAt: string;
+  order: SaleOrderRef;
+}
+
+export interface SaleFilters {
+  platformId?: string;
+  accountId?: string;
+  from?: string;
+  to?: string;
+  q?: string;
+}
+
+export interface SaleEditableFields {
+  purchaseCost?: number;
+  shippingCost?: number;
+  shippingRevenue?: number;
+  discount?: number;
+  refundAmount?: number;
+  otherCosts?: number;
+}
+
+export const EXPENSE_CATEGORIES = [
+  "Inventory",
+  "Shipping",
+  "Packaging",
+  "Platform Fees",
+  "Equipment",
+  "Gas",
+  "Advertising",
+  "Supplies",
+  "Other",
+] as const;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+export interface Expense {
+  id: string;
+  amount: number;
+  date: string;
+  category: string;
+  description: string | null;
+  platformId: string | null;
+  platformAccountId: string | null;
+  inventoryItemId: string | null;
+  receiptPath: string | null;
+  createdAt: string;
+  platform: Platform | null;
+  platformAccount: PlatformAccount | null;
+  inventoryItem: { id: string; title: string } | null;
+}
+
+export interface ExpenseFilters {
+  category?: string;
+  platformId?: string;
+  accountId?: string;
+  inventoryItemId?: string;
+  from?: string;
+  to?: string;
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
 
@@ -239,10 +354,17 @@ export const api = {
     start: (accountId: string) => request<{ ok: boolean }>(`/api/watchdogs/${accountId}/start`, { method: "POST" }),
     stop: (accountId: string) => request<{ ok: boolean }>(`/api/watchdogs/${accountId}/stop`, { method: "POST" }),
     restart: (accountId: string) => request<{ ok: boolean }>(`/api/watchdogs/${accountId}/restart`, { method: "POST" }),
+    healthCheck: (accountId: string) =>
+      request<{ ok: boolean; error?: string }>(`/api/watchdogs/${accountId}/health-check`, { method: "POST" }),
+    updateConfig: (accountId: string, data: { intervalMs?: number; staleAfterMs?: number }) =>
+      request<Watchdog>(`/api/watchdogs/${accountId}`, { method: "PATCH", body: JSON.stringify(data) }),
   },
 
   dashboard: {
-    summary: () => request<DashboardSummary>("/api/dashboard/summary"),
+    summary: (range?: { from: string; to: string }) => {
+      const qs = range ? `?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}` : "";
+      return request<DashboardSummary>(`/api/dashboard/summary${qs}`);
+    },
     byPlatform: () => request<PlatformBreakdown[]>("/api/dashboard/by-platform"),
   },
 
@@ -303,5 +425,55 @@ export const api = {
       request<ListingItem>(`/api/listings/${id}/link`, { method: "PATCH", body: JSON.stringify({ inventoryItemId }) }),
     update: (id: string, data: { status?: string; needsDelisting?: boolean }) =>
       request<ListingItem>(`/api/listings/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  },
+
+  sales: {
+    list: (filters: SaleFilters = {}) => {
+      const params = new URLSearchParams();
+      if (filters.platformId) params.set("platformId", filters.platformId);
+      if (filters.accountId) params.set("accountId", filters.accountId);
+      if (filters.from) params.set("from", filters.from);
+      if (filters.to) params.set("to", filters.to);
+      if (filters.q) params.set("q", filters.q);
+      const qs = params.toString();
+      return request<Sale[]>(`/api/sales${qs ? `?${qs}` : ""}`);
+    },
+    update: (id: string, data: SaleEditableFields) =>
+      request<Sale>(`/api/sales/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  },
+
+  expenses: {
+    list: (filters: ExpenseFilters = {}) => {
+      const params = new URLSearchParams();
+      if (filters.category) params.set("category", filters.category);
+      if (filters.platformId) params.set("platformId", filters.platformId);
+      if (filters.accountId) params.set("accountId", filters.accountId);
+      if (filters.inventoryItemId) params.set("inventoryItemId", filters.inventoryItemId);
+      if (filters.from) params.set("from", filters.from);
+      if (filters.to) params.set("to", filters.to);
+      const qs = params.toString();
+      return request<Expense[]>(`/api/expenses${qs ? `?${qs}` : ""}`);
+    },
+    create: (data: {
+      amount: number;
+      date: string;
+      category: string;
+      description?: string;
+      platformId?: string;
+      platformAccountId?: string;
+      inventoryItemId?: string;
+    }) => request<Expense>("/api/expenses", { method: "POST", body: JSON.stringify(data) }),
+    remove: (id: string) => request<void>(`/api/expenses/${id}`, { method: "DELETE" }),
+  },
+
+  notifications: {
+    log: (limit = 50) => request<NotificationLogEntry[]>(`/api/notifications?limit=${limit}`),
+    settings: () => request<NotificationSettingsResponse>("/api/notification-settings"),
+    updateSetting: (eventType: string, discordEnabled: boolean) =>
+      request<NotificationSettingRow>(`/api/notification-settings/${eventType}`, {
+        method: "PATCH",
+        body: JSON.stringify({ discordEnabled }),
+      }),
+    testDiscord: () => request<{ ok: boolean }>("/api/notifications/test-discord", { method: "POST" }),
   },
 };

@@ -72,11 +72,10 @@ Watchdog.
 6. Dashboard (today/week/month/all-time revenue, profit, items sold, health) — **done**
 7. Unified inbox — **done**
 8. Inventory / listings + cross-listing awareness — **done**
-9. Sales / revenue / profit, expenses (manual expense entry) — not started
-10. Discord notifications — not started
-11. Watchdog manager UI + health center — partially done (start/stop/restart/sync
-    + status from Phase 3-6 work; no dedicated health page / staleness UI yet)
-12. Real connector #1 — not started
+9. Sales / revenue / profit, expenses (manual expense entry) — **done**
+10. Discord notifications — **done** (desktop notifications also done, ahead of Phase 17 numbering)
+11. Watchdog manager UI + health center — **done**
+12. Real connector #1 (Depop, listings-only) — **done**
 13. Real connector #2+ — not started
 
 Phases 1–6 reached a runnable, demo-able vertical slice: mock data flows
@@ -117,6 +116,113 @@ explicit call for a manual (not automatic) delisting workflow. Verified
 live end-to-end: linked a Depop and a Facebook listing to one InventoryItem,
 simulated a sale on the Depop side, and confirmed the Facebook listing
 flagged needsDelisting while staying ACTIVE, then dismissed it.
+
+Phase 9 (sales/revenue/profit + expenses) is live at `/sales` and
+`/expenses`, plus an expanded Dashboard. `computeSaleFinancials` in
+`apps/server/src/services/financials.ts` is the one place the spec's
+formula lives (revenue = sale price + shipping revenue, minus cost of
+goods, platform fees, payment fees, shipping cost, discount, refund, other
+costs) — used both by `syncService` on every sync and by the Sales page's
+manual edits, so they can never disagree. Cost of goods auto-derives from a
+sale's linked InventoryItem the first time a sale is created; shipping,
+discounts, refunds, and other costs are manual (platforms don't report
+them) and — critically — a routine 30s sync tick never overwrites them
+back to 0, since the sync path reads the *existing* Sale's manual fields
+before recomputing rather than assuming zero. A refund on the connector
+side gets a sensible full-refund default the first time, still editable
+after. Expense CRUD (category, amount, date, optional platform/account/
+inventory links) feeds into the Dashboard's profit figures for every range.
+Dashboard now also shows a full financial breakdown (margin, avg sale
+price, avg profit/item, cost of goods, fees, net shipping, discounts,
+refunds, expenses) and an ad-hoc custom date range. All verified live,
+including the specific failure mode this was designed to avoid: edited a
+sale's shipping/discount fields, forced a re-sync, and confirmed the edits
+survived rather than reverting.
+
+Phase 10 (notifications) is live at `/settings`. `NotificationService`
+(`apps/server/src/services/notificationService.ts` +
+`discordChannel.ts`) fires after the event engine records new (deduped)
+events, per-event-type routing rules stored in a `NotificationSetting`
+table (defaults matching spec section 16's example rule set: new message,
+new offer, item sold, watchdog error, account disconnected/auth-required —
+everything else off by default, one click to enable). Every Discord
+attempt is logged to the existing `Notification` model regardless of
+outcome, visible on the Settings page. Desktop notifications use the real
+browser Notification API (`DesktopNotificationWatcher`, mounted once at
+the app root) — genuinely fires OS-level notifications while a tab is
+open, with its background-process limitation stated plainly in the UI
+rather than pretended away, since this is a plain web app without the
+optional Electron-style desktop shell. Verified live end-to-end including
+the failure path: pointed `DISCORD_WEBHOOK_URL` at a syntactically-valid
+but nonexistent webhook, confirmed Discord's real API rejected it
+(404 "Unknown Webhook"), and confirmed that exact error landed in the
+Notification log tied to the right event — then found and fixed a real bug
+in the same pass (the log endpoint returned raw `payloadJson` instead of
+parsed `payload`, which would have broken the Settings page's rendering).
+Also toggled a Discord routing rule through the actual UI checkbox and
+confirmed it persisted server-side.
+
+Phase 11 (watchdog manager + health center) split the old combined
+"Accounts & Watchdogs" page into two, matching the spec's nav: `/accounts`
+is now account CRUD only, `/watchdogs` is a dedicated health center — one
+card per account with a spec-section-18-shaped status (🟢 ONLINE /
+🟡 STALE / 🚨 ERROR / 🔴 AUTH REQUIRED / ⚫ STOPPED), last sync, last event,
+last error, Start/Stop/Restart, a standalone **health check** (distinct
+from a full sync — just asks the connector "are you there", per spec
+section 5) with its own result field, and a per-account editable sync
+interval + staleness threshold (new `staleAfterMs` column; previously a
+hardcoded global). Verified live including the specific mechanic spec 18
+asks for: manually aged a watchdog's `lastSuccessAt` past its configured
+threshold with state still RUNNING, confirmed it flipped to STALE, then
+confirmed a successful sync self-heals it back to ONLINE — plus a
+standalone health-check button and a live interval/staleness config save,
+both through actual clicks.
+
+**Phase 12 (real connector #1 — Depop)**: of the app's three platforms,
+only eBay has a legitimate public developer API; Depop and Facebook
+Marketplace don't offer one to individual sellers. The user explicitly
+chose to proceed with Depop anyway via browser automation, for personal
+account monitoring on their own machine — the exact scenario the spec's
+section 26 anticipates (isolated connector, real login session instead of
+stored passwords, no CAPTCHA/rate-limit bypass). `DepopBrowserConnector`
+(`packages/connectors/src/browser/`) is real and fully live-tested, not a
+mock: it drives a real headless Chromium (Playwright — needed because the
+site sits behind Cloudflare's bot-management JS challenge, which a bare
+HTTP client would likely fail) to read a seller's **public** shop page —
+no login, no password, ever. Scoped honestly to what's actually real:
+`supportedCapabilities: ["listings"]` only. Messages/offers/orders live
+behind a login this session had no way to inspect or verify a scraper
+against, so those throw `UnsupportedCapabilityError` rather than
+pretending to work — real follow-up work for whenever the user is ready to
+help validate the authenticated DOM live.
+
+Selectors were grounded in the live site rather than guessed: found and
+confirmed Depop's CSS module class names are unstable (content-hashed,
+rotate on every deploy) and avoided them entirely, instead using the one
+genuinely stable signal — product URLs (`a[href*="/products/"]`) — for
+identity, each card's own text for price/sold-status, and each product
+page's Open Graph meta tags (`og:title`) for a clean title, since those
+are an SEO/social-sharing contract unlikely to change. Verified against a
+real public shop (`depop.com/vintage/`, 42 real listings, 24 confirmed
+sold) end-to-end through the actual app: seeded the new `depop-live`
+platform, created an account, ran a real sync (~23s for 42 listings +
+title lookups), and confirmed the scraped titles/prices/sold-status landed
+correctly in the DB and rendered correctly on the Listings and Watchdogs
+pages, coexisting cleanly with the mock accounts. Also confirmed the
+Playwright Chromium process is actually closed (not leaked) when the
+watchdog stops.
+
+Building this surfaced two real bugs, both fixed: (1) `syncService.ts`
+called `getConversations()`/`getOrders()` unconditionally regardless of
+`supportedCapabilities` — harmless for mocks (which support everything)
+but would have crashed on this connector; now properly capability-gated
+like `getOffers()`/`getSales()` already were. (2) the default
+`staleAfterMs` (2 min) was shorter than this connector's default sync
+interval (5 min, deliberately gentler than the mocks' 30s to avoid
+hammering a real site), which would have made every real account flap to
+STALE between syncs; the default staleness threshold now scales with the
+account's interval (4×) instead of a fixed constant. One-time local setup:
+`npx playwright install chromium` (documented in README.md).
 
 Phases 7+ are substantial features in their own right and will be built in
 follow-up sessions, reviewed incrementally rather than dumped in one pass.

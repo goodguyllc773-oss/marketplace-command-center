@@ -1,4 +1,4 @@
-import { createMockConnector, type MarketplaceConnector } from "@mcc/connectors";
+import { createMockConnector, createBrowserConnector, type MarketplaceConnector } from "@mcc/connectors";
 import { prisma } from "../db.js";
 
 /**
@@ -18,7 +18,7 @@ export async function getConnector(platformAccountId: string): Promise<Marketpla
     include: { platform: true },
   });
 
-  const connector = resolveConnector(account.platform.key, account.platform.kind, account.id, account.label);
+  const connector = resolveConnector(account.platform.key, account.platform.kind, account.id, account.label, account.externalAccountId);
   liveConnectors.set(platformAccountId, connector);
   return connector;
 }
@@ -28,15 +28,21 @@ function resolveConnector(
   kind: string,
   accountId: string,
   label: string,
+  externalAccountId: string,
 ): MarketplaceConnector {
   if (kind === "mock") {
     return createMockConnector(platformKey, accountId, label);
   }
-  throw new Error(
-    `No real connector implemented yet for platform "${platformKey}" — only mock connectors exist so far (see PROJECT_PLAN.md Phase 12+).`,
-  );
+  if (kind === "browser") {
+    return createBrowserConnector(platformKey, accountId, externalAccountId);
+  }
+  throw new Error(`Unknown connector kind "${kind}" for platform "${platformKey}"`);
 }
 
 export function dropConnector(platformAccountId: string): void {
+  const connector = liveConnectors.get(platformAccountId);
+  if (connector && "disconnect" in connector) {
+    void connector.disconnect().catch(() => undefined);
+  }
   liveConnectors.delete(platformAccountId);
 }

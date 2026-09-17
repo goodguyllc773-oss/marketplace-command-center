@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { runFullSync } from "../services/syncService.js";
-import { stopWatchdog } from "../services/watchdogManager.js";
+import { DEFAULT_INTERVAL_MS, stopWatchdog } from "../services/watchdogManager.js";
 
 const CreateAccountSchema = z.object({
   platformKey: z.string().min(1),
@@ -30,13 +30,18 @@ export function registerAccountRoutes(app: FastifyInstance): void {
       return reply.code(404).send({ error: `Unknown platform "${platformKey}" — seed platforms first` });
     }
 
+    const intervalMs = DEFAULT_INTERVAL_MS[platform.kind] ?? 30_000;
     const account = await prisma.platformAccount.create({
       data: {
         platformId: platform.id,
         externalAccountId,
         label,
         status: "DISCONNECTED",
-        watchdog: { create: { state: "STOPPED" } },
+        // Staleness must stay comfortably above the sync interval — a
+        // fixed 120s default would flap RUNNING/STALE every cycle for a
+        // 5-minute-interval connector. 4x the interval (min 2 minutes)
+        // gives room for one or two missed cycles before alarming.
+        watchdog: { create: { state: "STOPPED", intervalMs, staleAfterMs: Math.max(intervalMs * 4, 120_000) } },
       },
       include: { platform: true, watchdog: true },
     });

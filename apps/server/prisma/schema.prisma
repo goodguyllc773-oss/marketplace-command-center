@@ -57,6 +57,9 @@ model Watchdog {
   lastEventAt       DateTime?
   lastError         String?
   intervalMs        Int             @default(30000)
+  // Configurable per spec section 18: "if a watchdog hasn't successfully
+  // checked within a configurable threshold" → STALE.
+  staleAfterMs      Int             @default(120000)
   updatedAt         DateTime        @updatedAt
 }
 
@@ -275,4 +278,15 @@ model Notification {
   error     String?
   sentAt    DateTime?
   createdAt DateTime  @default(now())
+}
+
+// Per-event-type routing rule for the Discord channel (spec section 16).
+// Desktop notifications are a client-side/browser concern (Web
+// Notifications API + per-browser permission) and are deliberately NOT
+// modeled here — that preference lives in the browser's own localStorage,
+// since there's no meaningful server-side "delivery" to track for it.
+model NotificationSetting {
+  eventType      String   @id
+  discordEnabled Boolean  @default(true)
+  updatedAt      DateTime @updatedAt
 }

@@ -10,6 +10,9 @@ import { registerEventRoutes } from "./routes/events.js";
 import { registerConversationRoutes } from "./routes/conversations.js";
 import { registerInventoryRoutes } from "./routes/inventory.js";
 import { registerListingRoutes } from "./routes/listings.js";
+import { registerSalesRoutes } from "./routes/sales.js";
+import { registerExpenseRoutes } from "./routes/expenses.js";
+import { registerNotificationRoutes } from "./routes/notifications.js";
 import { registerDevRoutes } from "./routes/dev.js";
 import { prisma } from "./db.js";
 import { startWatchdog, stopAllWatchdogs } from "./services/watchdogManager.js";
@@ -32,6 +35,9 @@ registerEventRoutes(app);
 registerConversationRoutes(app);
 registerInventoryRoutes(app);
 registerListingRoutes(app);
+registerSalesRoutes(app);
+registerExpenseRoutes(app);
+registerNotificationRoutes(app);
 registerDevRoutes(app);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

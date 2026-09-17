@@ -1,6 +1,8 @@
 import { prisma } from "../db.js";
 import { getConnector } from "./connectorManager.js";
 import { recordEvents } from "./eventEngine.js";
+import { computeSaleFinancials } from "./financials.js";
+import { dispatchNotifications } from "./notificationService.js";
 
 export interface SyncOutcome {
   ok: boolean;
@@ -31,12 +33,13 @@ export async function runFullSync(platformAccountId: string): Promise<SyncOutcom
       },
     });
 
+    const caps = connector.supportedCapabilities;
     const [listings, conversations, offers, orders, sales] = await Promise.all([
-      connector.getListings(),
-      connector.getConversations(),
-      connector.supportedCapabilities.includes("offers") ? connector.getOffers() : Promise.resolve([]),
-      connector.getOrders(),
-      connector.supportedCapabilities.includes("sales") ? connector.getSales() : Promise.resolve([]),
+      caps.includes("listings") ? connector.getListings() : Promise.resolve([]),
+      caps.includes("messages") ? connector.getConversations() : Promise.resolve([]),
+      caps.includes("offers") ? connector.getOffers() : Promise.resolve([]),
+      caps.includes("orders") ? connector.getOrders() : Promise.resolve([]),
+      caps.includes("sales") ? connector.getSales() : Promise.resolve([]),
     ]);
 
     const listingIdByExternal = new Map<string, string>();
@@ -201,7 +204,40 @@ export async function runFullSync(platformAccountId: string): Promise<SyncOutcom
       if (!orderId) continue;
       const platformFees = s.platformFees ?? 0;
       const paymentFees = s.paymentFees ?? 0;
-      const netProfit = s.salePrice - platformFees - paymentFees;
+
+      // Manual-entry fields (shippingCost, shippingRevenue, discount,
+      // refundAmount, otherCosts, and purchaseCost once user-edited) are
+      // never known to a connector — a routine sync must never stamp them
+      // back to 0, or every 30s tick would erase what the user entered on
+      // the Sales page. So: preserve an existing sale's manual fields, and
+      // only derive purchaseCost from a linked InventoryItem on first
+      // creation (best-effort — the user can always override it later).
+      const existing = await prisma.sale.findUnique({ where: { orderId } });
+
+      let purchaseCost = existing?.purchaseCost ?? 0;
+      if (!existing) {
+        const order = await prisma.order.findUnique({
+          where: { id: orderId },
+          select: { listing: { select: { inventoryItem: { select: { purchaseCost: true } } } } },
+        });
+        purchaseCost = order?.listing.inventoryItem?.purchaseCost ?? 0;
+      }
+
+      const manual = {
+        purchaseCost,
+        shippingCost: existing?.shippingCost ?? 0,
+        shippingRevenue: existing?.shippingRevenue ?? 0,
+        discount: existing?.discount ?? 0,
+        refundAmount: existing?.refundAmount ?? 0,
+        otherCosts: existing?.otherCosts ?? 0,
+      };
+      const { netProfit, profitMargin } = computeSaleFinancials({
+        salePrice: s.salePrice,
+        platformFees,
+        paymentFees,
+        ...manual,
+      });
+
       await prisma.sale.upsert({
         where: { orderId },
         create: {
@@ -210,22 +246,44 @@ export async function runFullSync(platformAccountId: string): Promise<SyncOutcom
           platformFees,
           paymentFees,
           netProfit,
-          profitMargin: s.salePrice > 0 ? netProfit / s.salePrice : 0,
+          profitMargin,
           currency: s.currency,
           soldAt: new Date(s.soldAt),
+          ...manual,
         },
-        update: {
-          salePrice: s.salePrice,
-          platformFees,
-          paymentFees,
-          netProfit,
-          profitMargin: s.salePrice > 0 ? netProfit / s.salePrice : 0,
-        },
+        update: { salePrice: s.salePrice, platformFees, paymentFees, netProfit, profitMargin },
+      });
+    }
+
+    // A sale whose order just came back REFUNDED gets a sensible default
+    // (full refund) if the user hasn't already entered one manually —
+    // still just a starting point, editable on the Sales page.
+    for (const o of orders) {
+      if (o.status !== "REFUNDED") continue;
+      const orderId = orderIdByExternal.get(o.externalOrderId);
+      if (!orderId) continue;
+      const sale = await prisma.sale.findUnique({ where: { orderId } });
+      if (!sale || sale.refundAmount > 0) continue;
+      const { netProfit, profitMargin } = computeSaleFinancials({
+        salePrice: sale.salePrice,
+        purchaseCost: sale.purchaseCost,
+        platformFees: sale.platformFees,
+        paymentFees: sale.paymentFees,
+        shippingCost: sale.shippingCost,
+        shippingRevenue: sale.shippingRevenue,
+        discount: sale.discount,
+        otherCosts: sale.otherCosts,
+        refundAmount: sale.salePrice,
+      });
+      await prisma.sale.update({
+        where: { orderId },
+        data: { refundAmount: sale.salePrice, netProfit, profitMargin },
       });
     }
 
     const { events, errors } = await connector.sync();
     const newEvents = await recordEvents(platformAccountId, events);
+    await dispatchNotifications(newEvents);
 
     await prisma.watchdog.update({
       where: { platformAccountId },

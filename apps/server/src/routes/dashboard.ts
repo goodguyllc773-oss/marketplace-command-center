@@ -25,22 +25,57 @@ function rangeStart(range: string): Date | undefined {
   }
 }
 
-async function summarizeRange(start: Date | undefined) {
-  const sales = await prisma.sale.findMany({
-    where: start ? { soldAt: { gte: start } } : undefined,
-  });
-  const revenue = sales.reduce((sum, s) => sum + s.salePrice, 0);
-  const profit = sales.reduce((sum, s) => sum + s.netProfit, 0);
-  return { revenue, profit, itemsSold: sales.length };
+/**
+ * Full financial summary for a date range (spec sections 13/14): revenue,
+ * profit, cost of goods, platform/payment fees, net shipping,
+ * discounts/refunds, manual expenses (subtracted from profit — they're
+ * real money out that isn't tied to any one sale), and per-item averages.
+ */
+async function summarizeRange(start: Date | undefined, end: Date | undefined) {
+  const dateFilter = start || end ? { gte: start, lte: end } : undefined;
+  const [sales, expenseAgg] = await Promise.all([
+    prisma.sale.findMany({ where: dateFilter ? { soldAt: dateFilter } : undefined }),
+    prisma.expense.aggregate({ _sum: { amount: true }, where: dateFilter ? { date: dateFilter } : undefined }),
+  ]);
+
+  const itemsSold = sales.length;
+  const revenue = sales.reduce((sum, s) => sum + s.salePrice + s.shippingRevenue, 0);
+  const costOfGoods = sales.reduce((sum, s) => sum + s.purchaseCost, 0);
+  const platformFees = sales.reduce((sum, s) => sum + s.platformFees, 0);
+  const paymentFees = sales.reduce((sum, s) => sum + s.paymentFees, 0);
+  const shippingNet = sales.reduce((sum, s) => sum + (s.shippingCost - s.shippingRevenue), 0);
+  const discounts = sales.reduce((sum, s) => sum + s.discount, 0);
+  const refunds = sales.reduce((sum, s) => sum + s.refundAmount, 0);
+  const expenses = expenseAgg._sum.amount ?? 0;
+  const profit = sales.reduce((sum, s) => sum + s.netProfit, 0) - expenses;
+
+  return {
+    revenue,
+    profit,
+    itemsSold,
+    profitMargin: revenue > 0 ? profit / revenue : 0,
+    avgSalePrice: itemsSold > 0 ? sales.reduce((sum, s) => sum + s.salePrice, 0) / itemsSold : 0,
+    avgProfitPerItem: itemsSold > 0 ? profit / itemsSold : 0,
+    costOfGoods,
+    platformFees,
+    paymentFees,
+    shippingNet,
+    discounts,
+    refunds,
+    expenses,
+  };
 }
 
 export function registerDashboardRoutes(app: FastifyInstance): void {
-  app.get("/api/dashboard/summary", async () => {
-    const [today, week, month, allTime] = await Promise.all([
-      summarizeRange(rangeStart("today")),
-      summarizeRange(rangeStart("week")),
-      summarizeRange(rangeStart("month")),
-      summarizeRange(rangeStart("allTime")),
+  app.get("/api/dashboard/summary", async (request) => {
+    const { from, to } = request.query as { from?: string; to?: string };
+
+    const [today, week, month, allTime, custom] = await Promise.all([
+      summarizeRange(rangeStart("today"), undefined),
+      summarizeRange(rangeStart("week"), undefined),
+      summarizeRange(rangeStart("month"), undefined),
+      summarizeRange(rangeStart("allTime"), undefined),
+      from || to ? summarizeRange(from ? new Date(from) : undefined, to ? new Date(to) : undefined) : Promise.resolve(null),
     ]);
 
     const [unreadMessages, pendingOffers, activeListings, watchdogs] = await Promise.all([
@@ -60,6 +95,7 @@ export function registerDashboardRoutes(app: FastifyInstance): void {
       week,
       month,
       allTime,
+      custom,
       unreadMessages,
       pendingOffers,
       activeListings,
