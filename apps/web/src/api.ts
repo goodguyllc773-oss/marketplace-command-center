@@ -122,8 +122,20 @@ export interface NotificationSettingRow {
   discordEnabled: boolean;
 }
 
+export interface NotificationCategory {
+  id: string;
+  label: string;
+  eventTypes: string[];
+  hasOwnWebhook: boolean;
+  /** Masked hint of the webhook this category actually sends to (its own, or the default). */
+  webhookHint: string | null;
+}
+
 export interface NotificationSettingsResponse {
   discordConfigured: boolean;
+  webhookSource: "app" | "env" | null;
+  webhookHint: string | null;
+  categories: NotificationCategory[];
   settings: NotificationSettingRow[];
 }
 
@@ -151,7 +163,7 @@ export interface Message {
   externalMessageId: string;
   senderName: string;
   body: string;
-  direction: "INBOUND" | "OUTBOUND";
+  direction: "INBOUND" | "OUTBOUND" | "SYSTEM" | "UNKNOWN";
   sentAt: string;
 }
 
@@ -176,6 +188,20 @@ export interface ConversationDetail {
   platformAccount: PlatformAccount;
   messages: Message[];
   capabilities: string[];
+  canLoadHistory: boolean;
+  hydrationState: "HYDRATED" | "SKIPPED_UNREAD" | "PENDING" | null;
+  /** Opens this conversation in the platform's own UI. */
+  platformUrl: string | null;
+  hydratedAt: string | null;
+}
+
+export interface LoadHistoryResult {
+  status: string;
+  detail?: string;
+  reachedStart: boolean;
+  messagesFound: number;
+  added: number;
+  updated: number;
 }
 
 export interface InboxSummary {
@@ -243,6 +269,7 @@ export interface ListingItem {
   watchers: number | null;
   offerCount: number | null;
   messageCount: number | null;
+  metadataJson: string | null;
   createdAt: string;
   updatedAt: string;
   platformAccount: PlatformAccount;
@@ -264,6 +291,24 @@ export interface SaleOrderRef {
   buyerName: string;
   status: string;
   listing: { id: string; title: string; inventoryItemId: string | null };
+  platformAccount: PlatformAccount;
+}
+
+export interface Offer {
+  id: string;
+  externalOfferId: string;
+  amount: number;
+  currency: string;
+  status: string;
+  role: "SELLING" | "BUYING";
+  offeredBy: "BUYER" | "SELLER" | null;
+  itemTitle: string | null;
+  itemUrl: string | null;
+  originalPrice: number | null;
+  statusLabel: string | null;
+  deadlineLabel: string | null;
+  updatedAt: string;
+  listing: { id: string; title: string; url: string | null } | null;
   platformAccount: PlatformAccount;
 }
 
@@ -341,6 +386,23 @@ export interface ExpenseFilters {
   to?: string;
 }
 
+function categoryQuery(category?: string): string {
+  return category ? `?category=${encodeURIComponent(category)}` : "";
+}
+
+/** Last report from the MCC Depop Reader Chrome extension. */
+export interface ExtensionStatus {
+  lastSeenAt: string;
+  lastSnapshotAt?: string;
+  path: string;
+  visible?: boolean;
+  conversations?: number;
+  autoRefresh?: boolean;
+  refreshMinutes?: number;
+  lastRefreshAt?: string;
+  refreshProblem?: string;
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
 
@@ -360,6 +422,7 @@ export const api = {
       request<{ requiresLogin: boolean; everAttempted: boolean; authenticated: boolean; message?: string }>(
         `/api/accounts/${id}/login-status`,
       ),
+    extensionStatus: (id: string) => request<ExtensionStatus | null>(`/api/accounts/${id}/extension-status`),
   },
 
   watchdogs: {
@@ -404,6 +467,11 @@ export const api = {
       request<Message>(`/api/conversations/${id}/reply`, { method: "POST", body: JSON.stringify({ message }) }),
     patch: (id: string, data: { unread?: boolean; archived?: boolean }) =>
       request<ConversationDetail>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    loadHistory: (id: string, confirmUnread = false) =>
+      request<LoadHistoryResult>(`/api/conversations/${id}/history`, {
+        method: "POST",
+        body: JSON.stringify({ confirmUnread }),
+      }),
   },
 
   inventory: {
@@ -438,6 +506,10 @@ export const api = {
       request<ListingItem>(`/api/listings/${id}/link`, { method: "PATCH", body: JSON.stringify({ inventoryItemId }) }),
     update: (id: string, data: { status?: string; needsDelisting?: boolean }) =>
       request<ListingItem>(`/api/listings/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  },
+
+  offers: {
+    list: (role?: "SELLING" | "BUYING") => request<Offer[]>(`/api/offers${role ? `?role=${role}` : ""}`),
   },
 
   sales: {
@@ -487,6 +559,28 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ discordEnabled }),
       }),
-    testDiscord: () => request<{ ok: boolean }>("/api/notifications/test-discord", { method: "POST" }),
+    testDiscord: (category?: string) =>
+      request<{ ok: boolean }>(`/api/notifications/test-discord${categoryQuery(category)}`, { method: "POST" }),
+    saveWebhook: (url: string, category?: string) =>
+      request<{ ok: boolean; webhookHint: string }>("/api/settings/discord-webhook", {
+        method: "PUT",
+        body: JSON.stringify({ url, category }),
+      }),
+    removeWebhook: (category?: string) =>
+      request<{ ok: boolean }>(`/api/settings/discord-webhook${categoryQuery(category)}`, { method: "DELETE" }),
+  },
+  email: {
+    get: (accountId: string) => request<EmailStatus>(`/api/accounts/${accountId}/email`),
+    connect: (accountId: string, data: { user: string; password: string; host: string; matchTo: string }) =>
+      request<EmailStatus>(`/api/accounts/${accountId}/email`, { method: "PUT", body: JSON.stringify(data) }),
+    disconnect: (accountId: string) => request<EmailStatus>(`/api/accounts/${accountId}/email`, { method: "DELETE" }),
   },
 };
+
+export interface EmailStatus {
+  connected: boolean;
+  user?: string;
+  host?: string;
+  matchTo?: string | null;
+  connectedAt?: string;
+}

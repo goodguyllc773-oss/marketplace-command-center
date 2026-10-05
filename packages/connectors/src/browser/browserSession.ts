@@ -58,17 +58,35 @@ export async function openLoginWindow(accountId: string, startUrl: string): Prom
   await closeHeadlessSession(accountId);
 
   const { chromium } = await import("playwright");
-  const context = await chromium.launchPersistentContext(profileDir(accountId), {
-    headless: false,
-    viewport: null,
+  const dir = profileDir(accountId);
+  console.info(`[login-window] launching for ${accountId}, profile: ${path.resolve(dir)}`);
+  let context: BrowserContext;
+  try {
+    context = await chromium.launchPersistentContext(dir, { headless: false, viewport: null });
+  } catch (err) {
+    console.error(`[login-window] launch failed for ${accountId}:`, err instanceof Error ? err.message : err);
+    throw err;
+  }
+  // Diagnostic only, not state: if this fires, it shows what was actually saved.
+  context.on("close", () => {
+    const entries = fs.readdirSync(dir).length;
+    console.info(`[login-window] closed for ${accountId}, profile now has ${entries} entries`);
   });
   const page = context.pages()[0] ?? (await context.newPage());
   await page.goto(startUrl, { waitUntil: "domcontentloaded" });
-  // No further tracking or awaiting close — the window is the user's to
-  // manage from here; real status is read back via healthCheck().
+  console.info(`[login-window] opened ${startUrl} for ${accountId}, profile has ${fs.readdirSync(dir).length} entries`);
+}
+
+/** Removes an account's saved browser session (its login cookies) for
+ * good — used when the account itself is removed from the app. */
+export async function deleteBrowserProfile(accountId: string): Promise<void> {
+  await closeHeadlessSession(accountId);
+  fs.rmSync(path.join(PROFILE_ROOT, accountId), { recursive: true, force: true });
 }
 
 const headlessContexts = new Map<string, BrowserContext>();
+// A profile can't be reopened until its previous browser has fully exited.
+const closing = new Map<string, Promise<void>>();
 
 /** Reuses the same saved profile headlessly for actual scraping/reads —
  * cookies only, same as any returning visitor's browser. Throws (doesn't
@@ -76,11 +94,16 @@ const headlessContexts = new Map<string, BrowserContext>();
  * profile — callers should surface that as "close the login window and
  * try again" rather than a generic failure. */
 export async function getHeadlessSession(accountId: string): Promise<{ context: BrowserContext; page: Page }> {
+  await closing.get(accountId);
   let context = headlessContexts.get(accountId);
   if (!context) {
     const { chromium } = await import("playwright");
-    context = await chromium.launchPersistentContext(profileDir(accountId), { headless: true });
-    headlessContexts.set(accountId, context);
+    const launched = await chromium.launchPersistentContext(profileDir(accountId), { headless: true });
+    launched.on("close", () => {
+      if (headlessContexts.get(accountId) === launched) headlessContexts.delete(accountId);
+    });
+    headlessContexts.set(accountId, launched);
+    context = launched;
   }
   const page = context.pages()[0] ?? (await context.newPage());
   return { context, page };
@@ -88,8 +111,12 @@ export async function getHeadlessSession(accountId: string): Promise<{ context: 
 
 export async function closeHeadlessSession(accountId: string): Promise<void> {
   const context = headlessContexts.get(accountId);
-  if (context) {
-    await context.close().catch(() => undefined);
-    headlessContexts.delete(accountId);
-  }
+  if (!context) return closing.get(accountId);
+  headlessContexts.delete(accountId);
+  const done = context
+    .close()
+    .catch(() => undefined)
+    .finally(() => closing.delete(accountId));
+  closing.set(accountId, done);
+  await done;
 }

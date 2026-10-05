@@ -4,6 +4,7 @@ import Inbox from "./pages/Inbox.js";
 import Inventory from "./pages/Inventory.js";
 import Listings from "./pages/Listings.js";
 import Sales from "./pages/Sales.js";
+import Offers from "./pages/Offers.js";
 import Expenses from "./pages/Expenses.js";
 import Accounts from "./pages/Accounts.js";
 import Watchdogs from "./pages/Watchdogs.js";
@@ -16,6 +17,7 @@ const NAV = [
   { to: "/inbox", label: "Inbox" },
   { to: "/inventory", label: "Inventory" },
   { to: "/listings", label: "Listings" },
+  { to: "/offers", label: "Offers" },
   { to: "/sales", label: "Sales" },
   { to: "/expenses", label: "Expenses" },
   { to: "/accounts", label: "Accounts" },
@@ -56,6 +58,7 @@ export default function App() {
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/listings" element={<Listings />} />
+          <Route path="/offers" element={<Offers />} />
           <Route path="/sales" element={<Sales />} />
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/accounts" element={<Accounts />} />

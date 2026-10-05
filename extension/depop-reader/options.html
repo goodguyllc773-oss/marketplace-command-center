@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MCC Depop Reader</title>
+    <style>
+      :root { color-scheme: dark; --bg: #0b1020; --panel: #121a2e; --line: #26324d; --text: #e2e8f0; --muted: #94a3b8; --accent: #a78bfa; --ok: #34d399; --bad: #fb7185; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+      main { max-width: 560px; margin: 32px auto; padding: 0 16px; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p { color: var(--muted); margin: 6px 0; }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-top: 16px; }
+      label { display: block; margin-top: 12px; font-size: 12px; color: var(--muted); }
+      input, select { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 7px 9px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+      button { margin-top: 14px; margin-right: 8px; padding: 7px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #0b1020; font-weight: 600; cursor: pointer; }
+      button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+      .ok { color: var(--ok); } .bad { color: var(--bad); }
+      ul { color: var(--muted); padding-left: 18px; margin: 6px 0; }
+      label.row { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin-top: 16px; }
+      label.row input { width: auto; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>MCC Depop Reader</h1>
+      <p>Passes the Depop messages page <strong>you</strong> have open to Marketplace Command Center on this computer.</p>
+
+      <div class="card">
+        <label>MCC server<input id="serverUrl" placeholder="http://127.0.0.1:4000" /></label>
+        <label>MCC API key (LOCAL_API_KEY from apps/server/.env)<input id="apiKey" type="password" autocomplete="off" /></label>
+        <button id="load" class="secondary">Find my Depop shops</button>
+        <label>Which MCC Depop shop is signed in on this Chrome profile?<select id="accountId"><option value="">— load shops first —</option></select></label>
+        <label class="row"><input id="autoRefresh" type="checkbox" /> Auto-refresh the Depop conversation list</label>
+        <label>Every (minutes, 2–30)<input id="refreshMinutes" type="number" min="2" max="30" /></label>
+        <p>Clicks Depop's own "Refresh" button on the list so new messages show up — only on the list, and never while you're using the page.</p>
+        <label class="row"><input id="offersCheck" type="checkbox" /> Check the Offers tab</label>
+        <label>Every (minutes, 5–120) — and soon after "unread offers" appears<input id="offersMinutes" type="number" min="5" max="120" /></label>
+        <p>Opens Depop's Offers tab, reads it for MCC, then goes back to Chat. Depop may clear its own "unread offers" marker when the tab is viewed — MCC alerts you instead.</p>
+        <button id="save">Save</button>
+        <p id="msg"></p>
+      </div>
+
+      <div class="card">
+        <strong>Status</strong>
+        <p id="status">No reports yet.</p>
+      </div>
+
+      <div class="card">
+        <strong>How to use</strong>
+        <ul>
+          <li>Open <code>depop.com/messages</code> in a tab and leave it open.</li>
+          <li>Leave the conversation <em>list</em> showing — opening a conversation can mark it read on Depop.</li>
+          <li>If Chrome's Memory Saver is on, add <code>depop.com</code> to "Always keep these sites active".</li>
+        </ul>
+        <p>It never opens conversations (that would mark them read), types, or sends anything on Depop, and never reads cookies or passwords. The only clicks it ever makes are the optional Refresh and Offers/Chat tabs above. It only talks to MCC on this PC.</p>
+      </div>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

@@ -23,9 +23,11 @@ export const EVENT_TYPE_ICON: Record<string, string> = {
   WATCHDOG_STARTED: "\u{1F7E2}",
   WATCHDOG_STOPPED: "⚫",
   WATCHDOG_ERROR: "\u{1F6A8}",
+  PLATFORM_NOTIFICATION: "\u{1F4EC}",
 };
 
 export function describeEvent(type: string, payload: Record<string, unknown>): string {
+  if (typeof payload.summary === "string") return payload.summary;
   switch (type) {
     case "MESSAGE_RECEIVED":
       return `New message from ${payload.senderName ?? "buyer"}${payload.listingTitle ? ` about "${payload.listingTitle}"` : ""}`;
@@ -35,6 +37,10 @@ export function describeEvent(type: string, payload: Record<string, unknown>): s
       return `Offer of ${payload.amount} ${payload.currency ?? ""} on "${payload.listingTitle}"`;
     case "LISTING_SOLD":
       return `Sold "${payload.listingTitle}" for ${payload.salePrice} ${payload.currency ?? ""}`;
+    case "LISTING_REMOVED":
+      return `Taken down: "${payload.listingTitle ?? "listing"}"${payload.reason ? ` — ${payload.reason}` : ""}`;
+    case "LISTING_CREATED":
+      return `New listing: "${payload.listingTitle ?? "listing"}"`;
     case "REFUND_ISSUED":
       return "Refund issued";
     case "ACCOUNT_DISCONNECTED":

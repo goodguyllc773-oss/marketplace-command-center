@@ -12,7 +12,8 @@ const PLATFORM_NAMES: Record<string, string> = {
 };
 
 async function main() {
-  for (const key of MOCK_PLATFORM_IDS) {
+  const mockKeys = process.env.MCC_ENABLE_MOCKS === "true" ? MOCK_PLATFORM_IDS : [];
+  for (const key of mockKeys) {
     await prisma.platform.upsert({
       where: { key },
       create: { key, name: PLATFORM_NAMES[key] ?? key, kind: "mock" },
@@ -26,7 +27,7 @@ async function main() {
       update: {},
     });
   }
-  console.log(`Seeded platforms: ${[...MOCK_PLATFORM_IDS, ...REAL_PLATFORM_IDS].join(", ")}`);
+  console.log(`Seeded platforms: ${[...mockKeys, ...REAL_PLATFORM_IDS].join(", ")}`);
 }
 
 main()

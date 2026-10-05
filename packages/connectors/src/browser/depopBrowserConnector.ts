@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { Browser, Page } from "playwright";
-import type { ConnectorCapability, EventType, HealthStatus, StandardEvent } from "@mcc/shared";
+import type { Page } from "playwright";
+import type { ConnectorCapability, HealthStatus, StandardEvent } from "@mcc/shared";
 import type {
   ConnectorConversation,
   ConnectorListing,
@@ -14,6 +14,18 @@ import type {
   SyncResult,
 } from "../types.js";
 import { UnsupportedCapabilityError } from "../types.js";
+import { fetchRecentEmailsFrom, type EmailConfig } from "../email/emailSource.js";
+import { parseDepopEmails, type DepopEmailData } from "../email/depopEmailParser.js";
+
+// Headless Chromium announces itself as "HeadlessChrome", which Depop
+// rejects outright; this is the same browser's normal desktop identity
+// (installed Playwright Chromium v1243 = Chrome 153).
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
+const SCAN_TTL_MS = 60_000;
+const PAUSE_BETWEEN_PAGES_MS = 2_500;
+const TITLE_LOOKUPS_PER_CHECK = 5;
+const EMAIL_LOOKBACK_DAYS = 14;
 
 interface ScrapedListing {
   slug: string;
@@ -22,74 +34,71 @@ interface ScrapedListing {
   status: "ACTIVE" | "SOLD";
 }
 
+interface Scan {
+  at: number;
+  status: number;
+  listings: ScrapedListing[];
+}
+
 /**
- * REAL connector for a Depop seller's public shop page. Depop has no
- * public developer API for individual sellers, so this reads the same
- * public HTML/meta-tag data any visitor's browser sees — no login, no
- * credentials, nothing private. It is deliberately narrow:
- * `supportedCapabilities` is only `["listings"]`, honestly, because
- * messages/offers/orders live behind login and this session had no way to
- * inspect that authenticated DOM to build (or verify) a scraper for it —
- * that's real follow-up work, not something to fake here.
+ * REAL connector for a Depop seller's public shop page — signed out, no
+ * credentials, nothing private. `supportedCapabilities` is only
+ * `["listings"]`: messages/offers/orders live behind login, and Depop
+ * answered the automated login window with 403 (2026-10-05). Getting past
+ * that would mean evading its bot protection, which this app doesn't do.
  *
- * Uses a real Chromium via Playwright rather than a bare HTTP client
- * because the site sits behind Cloudflare's bot-management JS challenge;
- * a plain fetch from a script (no browser, no JS execution) is very
- * likely to be blocked outright.
+ * Depop also answers 403 once one browser loads several pages back to
+ * back (seen live), while a fresh browser loading one page gets 200. So
+ * each check uses a fresh short-lived browser: one shop-page load, then at
+ * most a few spaced-out product-page title lookups, then it closes. A 403
+ * is reported and simply retried at the next check — no workarounds.
  */
 export class DepopBrowserConnector implements MarketplaceConnector {
   readonly platformId = "depop-live";
   readonly accountId: string;
-  readonly supportedCapabilities: readonly ConnectorCapability[] = ["listings"];
+  readonly supportedCapabilities: readonly ConnectorCapability[];
+  readonly coreDiffsState = true;
 
   private readonly username: string;
-  private browser: Browser | null = null;
-  private page: Page | null = null;
-
-  private readonly knownListings = new Map<string, ScrapedListing>();
-  private readonly titleCache = new Map<string, { title: string; description?: string }>();
+  private readonly email: EmailConfig | undefined;
+  private readonly titleCache = new Map<string, string>();
   private readonly firstSeenAt = new Map<string, string>();
-  private readonly pendingEvents: StandardEvent[] = [];
-  private lastError: string | undefined;
+  private scan: Scan | null = null;
+  private inFlight: Promise<Scan> | null = null;
+  private emailData: { at: number; data: DepopEmailData } | null = null;
+  private emailInFlight: Promise<DepopEmailData> | null = null;
 
-  constructor(accountId: string, depopUsername: string) {
+  /** With `email`, messages/offers/sales come from Depop's notification
+   * emails (see email/depopEmailParser.ts); listings always come from the
+   * public shop page. */
+  constructor(accountId: string, depopUsername: string, email?: EmailConfig) {
     this.accountId = accountId;
     this.username = depopUsername.replace(/^@/, "").trim();
+    this.email = email;
+    // Offers/purchases from email arrive as alerts via sync(): Depop's emails
+    // carry no product ids, so they can't be attached to a listing.
+    this.supportedCapabilities = email ? ["listings", "messages"] : ["listings"];
   }
 
-  async connect(): Promise<void> {
-    if (this.browser) return;
-    const { chromium } = await import("playwright");
-    this.browser = await chromium.launch({ headless: true });
-    this.page = await this.browser.newPage({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    });
-  }
+  async connect(): Promise<void> {}
 
   async disconnect(): Promise<void> {
-    await this.page?.close().catch(() => undefined);
-    await this.browser?.close().catch(() => undefined);
-    this.page = null;
-    this.browser = null;
+    this.scan = null;
   }
 
   async healthCheck(): Promise<HealthStatus> {
+    const lastCheckedAt = new Date().toISOString();
     try {
-      await this.connect();
-      const page = this.page!;
-      const res = await page.goto(this.shopUrl(), { waitUntil: "domcontentloaded", timeout: 20_000 });
-      const online = !!res && res.status() < 400;
-      if (!online) this.lastError = `Shop page returned ${res?.status()}`;
+      const scan = await this.getScan();
+      const online = scan.status > 0 && scan.status < 400;
       return {
         online,
-        authenticated: true, // no login required for this capability
-        lastCheckedAt: new Date().toISOString(),
-        message: online ? undefined : this.lastError,
+        authenticated: true, // listings need no login
+        lastCheckedAt,
+        message: online ? undefined : refusedMessage(scan.status),
       };
     } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      return { online: false, authenticated: true, lastCheckedAt: new Date().toISOString(), message: this.lastError };
+      return { online: false, authenticated: true, lastCheckedAt, message: err instanceof Error ? err.message : String(err) };
     }
   }
 
@@ -98,17 +107,14 @@ export class DepopBrowserConnector implements MarketplaceConnector {
   }
 
   async getListings(): Promise<ConnectorListing[]> {
-    await this.connect();
-    const scraped = await this.scrapeShopPage();
-    await this.diffAndEmit(scraped);
+    const scan = await this.getScan();
+    if (scan.status === 0 || scan.status >= 400) throw new Error(refusedMessage(scan.status));
 
-    const results: ConnectorListing[] = [];
-    for (const item of scraped) {
-      const details = this.titleCache.get(item.slug);
-      const createdAt = this.firstSeenAt.get(item.slug) ?? new Date().toISOString();
-      results.push({
+    return scan.listings.map((item) => {
+      if (!this.firstSeenAt.has(item.slug)) this.firstSeenAt.set(item.slug, new Date().toISOString());
+      return {
         externalListingId: item.slug,
-        title: details?.title ?? item.slug.replaceAll("-", " "),
+        title: this.titleCache.get(item.slug) ?? item.slug.replaceAll("-", " "),
         price: item.price,
         currency: "USD",
         status: item.status,
@@ -118,37 +124,72 @@ export class DepopBrowserConnector implements MarketplaceConnector {
         watchers: null,
         offerCount: null,
         messageCount: null,
-        createdAt,
+        createdAt: this.firstSeenAt.get(item.slug)!,
         updatedAt: new Date().toISOString(),
-      });
-    }
-    return results;
+      };
+    });
   }
 
   async getConversations(): Promise<ConnectorConversation[]> {
-    throw new UnsupportedCapabilityError(this.platformId, "messages");
+    return (await this.getEmailData("messages")).conversations;
   }
-  async getMessages(): Promise<ConnectorMessage[]> {
-    throw new UnsupportedCapabilityError(this.platformId, "messages");
+  async getMessages(conversationId: string): Promise<ConnectorMessage[]> {
+    return (await this.getEmailData("messages")).messages.get(conversationId) ?? [];
   }
   async sendMessage(): Promise<SendMessageResult> {
     throw new UnsupportedCapabilityError(this.platformId, "sendMessages");
   }
   async getOrders(): Promise<ConnectorOrder[]> {
-    throw new UnsupportedCapabilityError(this.platformId, "orders");
+    return (await this.getEmailData("orders")).orders;
   }
   async getSales(): Promise<ConnectorSale[]> {
-    throw new UnsupportedCapabilityError(this.platformId, "sales");
+    return (await this.getEmailData("sales")).sales;
   }
   async getOffers(): Promise<ConnectorOffer[]> {
-    throw new UnsupportedCapabilityError(this.platformId, "offers");
+    return (await this.getEmailData("offers")).offers;
   }
 
+  /** One mailbox read per check, shared by messages/offers/orders/sales. */
+  private async getEmailData(capability: ConnectorCapability): Promise<DepopEmailData> {
+    const email = this.email;
+    if (!email) throw new UnsupportedCapabilityError(this.platformId, capability);
+    if (this.emailData && Date.now() - this.emailData.at < SCAN_TTL_MS) return this.emailData.data;
+    if (!this.emailInFlight) {
+      this.emailInFlight = fetchRecentEmailsFrom(email, "depop.com", { sinceDays: EMAIL_LOOKBACK_DAYS, max: 200 })
+        .then((emails) => parseDepopEmails(emails, email.connectedAt))
+        .then((data) => {
+          this.emailData = { at: Date.now(), data };
+          return data;
+        })
+        .finally(() => (this.emailInFlight = null));
+    }
+    return this.emailInFlight;
+  }
+
+  /** Email notices (counter offers, purchases, anything without a
+   * dedicated rule) become events here; dedupe is per email, and emails
+   * from before the mailbox was connected never alert. */
   async sync(): Promise<SyncResult> {
-    const events = this.pendingEvents.splice(0, this.pendingEvents.length);
-    const errors = this.lastError ? [this.lastError] : [];
-    this.lastError = undefined;
-    return { syncedAt: new Date().toISOString(), events, errors };
+    const syncedAt = new Date().toISOString();
+    if (!this.email) return { syncedAt, events: [], errors: [] };
+    try {
+      const { notices } = await this.getEmailData("messages");
+      const events: StandardEvent[] = notices
+        .filter((n) => !n.historical)
+        .map((n) => ({
+          id: randomUUID(),
+          type: n.type,
+          platformId: this.platformId,
+          accountId: this.accountId,
+          timestamp: n.date,
+          entityId: n.messageId,
+          dedupeKey: `${this.platformId}:${this.accountId}:email:${n.messageId}`,
+          payload: n.payload,
+        }));
+      return { syncedAt, events, errors: [] };
+    } catch (err) {
+      return { syncedAt, events: [], errors: [`Couldn't read Depop emails: ${err instanceof Error ? err.message : String(err)}`] };
+    }
   }
 
   // ---- internals --------------------------------------------------------
@@ -157,104 +198,84 @@ export class DepopBrowserConnector implements MarketplaceConnector {
     return `https://www.depop.com/${this.username}/`;
   }
 
-  /** Product URLs are stable, content-derived slugs (not styling classes),
-   * so this survives Depop's frequent CSS-module class renames — verified
-   * live against the site's actual markup before writing this. */
-  private async scrapeShopPage(): Promise<ScrapedListing[]> {
-    const page = this.page!;
-    await page.goto(this.shopUrl(), { waitUntil: "networkidle", timeout: 30_000 });
-
-    return page.evaluate(() => {
-      const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/products/"]'));
-      const seen = new Set<string>();
-      const out: { slug: string; url: string; price: number; status: "ACTIVE" | "SOLD" }[] = [];
-
-      for (const link of links) {
-        const match = link.getAttribute("href")?.match(/\/products\/([^/]+)\/?/);
-        const slug = match?.[1];
-        if (!slug || seen.has(slug)) continue;
-        seen.add(slug);
-
-        const card = link.closest("li") ?? link.parentElement ?? link;
-        const text = card.textContent ?? "";
-        const priceMatch = text.match(/[$€£]\s?([\d,]+\.?\d*)/);
-        const price = priceMatch ? Number(priceMatch[1].replace(/,/g, "")) : 0;
-        const status: "ACTIVE" | "SOLD" = /\bsold\b/i.test(text) ? "SOLD" : "ACTIVE";
-
-        out.push({ slug, url: `https://www.depop.com/products/${slug}/`, price, status });
-      }
-      return out;
-    });
+  /** One scan serves the health check and the listings read of a watchdog
+   * tick (and the Accounts page's status polling). */
+  private async getScan(): Promise<Scan> {
+    if (this.scan && Date.now() - this.scan.at < SCAN_TTL_MS) return this.scan;
+    if (!this.inFlight) {
+      this.inFlight = this.runScan()
+        .then((s) => (this.scan = s))
+        .finally(() => (this.inFlight = null));
+    }
+    return this.inFlight;
   }
 
-  /** Open Graph meta tags are stable (SEO/social-share contract) unlike
-   * layout classes — used only once per listing and cached, to keep this
-   * gentle on the site rather than re-fetching every sync tick. */
-  private async resolveTitle(slug: string, url: string): Promise<void> {
-    if (this.titleCache.has(slug)) return;
+  private async runScan(): Promise<Scan> {
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: true });
     try {
-      const page = this.page!;
-      const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
-      if (!res || res.status() >= 400) return;
-      const title = await page
-        .locator('meta[property="og:title"]')
-        .getAttribute("content")
-        .catch(() => null);
-      const description = await page
-        .locator('meta[property="og:description"]')
-        .getAttribute("content")
-        .catch(() => null);
-      this.titleCache.set(slug, {
-        title: (title ?? slug.replaceAll("-", " ")).replace(/\s*\|\s*Depop$/i, ""),
-        description: description ?? undefined,
-      });
-    } catch {
-      // best-effort — falls back to a slug-derived title in getListings()
+      const page = await browser.newPage({ userAgent: USER_AGENT });
+      const res = await page.goto(this.shopUrl(), { waitUntil: "networkidle", timeout: 30_000 });
+      const status = res?.status() ?? 0;
+      if (status >= 400) return { at: Date.now(), status, listings: [] };
+      const listings = await scrapeShopPage(page);
+
+      let lookups = 0;
+      for (const item of listings) {
+        if (this.titleCache.has(item.slug) || lookups >= TITLE_LOOKUPS_PER_CHECK) continue;
+        lookups++;
+        await page.waitForTimeout(PAUSE_BETWEEN_PAGES_MS);
+        const title = await lookUpTitle(page, item.url);
+        if (title === "refused") break;
+        if (title) this.titleCache.set(item.slug, title);
+      }
+      return { at: Date.now(), status, listings };
+    } finally {
+      await browser.close().catch(() => undefined);
     }
   }
+}
 
-  private async diffAndEmit(scraped: ScrapedListing[]): Promise<void> {
-    const now = new Date().toISOString();
-    const seenSlugs = new Set(scraped.map((s) => s.slug));
+function refusedMessage(status: number): string {
+  return status ? `Depop refused the request (${status}) — will try again next check` : "Depop shop page didn't load";
+}
 
-    for (const item of scraped) {
-      const prior = this.knownListings.get(item.slug);
-      if (!prior) {
-        this.firstSeenAt.set(item.slug, now);
-        await this.resolveTitle(item.slug, item.url);
-        this.emit("LISTING_CREATED", item.slug, { listingId: item.slug, url: item.url, price: item.price });
-      } else if (prior.status === "ACTIVE" && item.status === "SOLD") {
-        const title = this.titleCache.get(item.slug)?.title ?? item.slug;
-        this.emit(
-          "LISTING_SOLD",
-          item.slug,
-          { listingId: item.slug, listingTitle: title, salePrice: item.price, currency: "USD" },
-          `${this.platformId}:${this.accountId}:sold:${item.slug}`,
-        );
-      } else if (prior.price !== item.price) {
-        this.emit("LISTING_UPDATED", item.slug, { listingId: item.slug, price: item.price });
-      }
-      this.knownListings.set(item.slug, { slug: item.slug, url: item.url, price: item.price, status: item.status });
+/** Product URLs are stable, content-derived slugs (not styling classes),
+ * so this survives Depop's frequent CSS-module class renames — verified
+ * live against the site's actual markup. */
+async function scrapeShopPage(page: Page): Promise<ScrapedListing[]> {
+  return page.evaluate(() => {
+    const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/products/"]'));
+    const seen = new Set<string>();
+    const out: { slug: string; url: string; price: number; status: "ACTIVE" | "SOLD" }[] = [];
+
+    for (const link of links) {
+      const match = link.getAttribute("href")?.match(/\/products\/([^/]+)\/?/);
+      const slug = match?.[1];
+      if (!slug || seen.has(slug)) continue;
+      seen.add(slug);
+
+      const card = link.closest("li") ?? link.parentElement ?? link;
+      const text = card.textContent ?? "";
+      const priceMatch = text.match(/[$€£]\s?([\d,]+\.?\d*)/);
+      const price = priceMatch ? Number(priceMatch[1].replace(/,/g, "")) : 0;
+      const status: "ACTIVE" | "SOLD" = /\bsold\b/i.test(text) ? "SOLD" : "ACTIVE";
+
+      out.push({ slug, url: `https://www.depop.com/products/${slug}/`, price, status });
     }
+    return out;
+  });
+}
 
-    for (const [slug] of this.knownListings) {
-      if (!seenSlugs.has(slug)) {
-        this.emit("LISTING_REMOVED", slug, { listingId: slug });
-        this.knownListings.delete(slug);
-      }
-    }
-  }
-
-  private emit(type: EventType, entityId: string, payload: unknown, dedupeKey?: string): void {
-    this.pendingEvents.push({
-      id: randomUUID(),
-      type,
-      platformId: this.platformId,
-      accountId: this.accountId,
-      timestamp: new Date().toISOString(),
-      entityId,
-      dedupeKey: dedupeKey ?? `${this.platformId}:${this.accountId}:${type}:${entityId}:${Date.now()}`,
-      payload,
-    });
+/** The product page's Open Graph title (an SEO contract, stable unlike
+ * layout classes). "refused" stops further lookups for this check. */
+async function lookUpTitle(page: Page, url: string): Promise<string | null | "refused"> {
+  try {
+    const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    if (!res || res.status() >= 400) return "refused";
+    const title = await page.locator('meta[property="og:title"]').getAttribute("content").catch(() => null);
+    return title ? title.replace(/\s*\|\s*Depop$/i, "") : null;
+  } catch {
+    return null;
   }
 }

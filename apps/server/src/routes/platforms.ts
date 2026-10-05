@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { MOCK_PLATFORM_IDS, REAL_PLATFORM_IDS } from "@mcc/connectors";
 import { prisma } from "../db.js";
+import { env } from "../env.js";
 
 const PLATFORM_NAMES: Record<string, string> = {
   depop: "Depop",
@@ -18,13 +19,11 @@ export function registerPlatformRoutes(app: FastifyInstance): void {
     });
   });
 
-  /** Idempotently ensures the built-in mock platforms and real (non-mock)
-   * connector platforms exist. Real platforms get added here as they're
-   * implemented (Phase 12+) — kept distinctly named/keyed from their mock
-   * counterparts so demo data and live data never mix. */
+  /** Idempotently ensures the real connector platforms exist. Mock (sample
+   * data) platforms are only added when MCC_ENABLE_MOCKS=true. */
   app.post("/api/platforms/seed", async () => {
     const results = [];
-    for (const key of MOCK_PLATFORM_IDS) {
+    for (const key of env.MCC_ENABLE_MOCKS ? MOCK_PLATFORM_IDS : []) {
       const platform = await prisma.platform.upsert({
         where: { key },
         create: { key, name: PLATFORM_NAMES[key] ?? key, kind: "mock" },

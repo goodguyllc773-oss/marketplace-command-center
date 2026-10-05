@@ -1,12 +1,20 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { EVENT_TYPES } from "@mcc/shared";
+import { EVENT_TYPES, NOTIFICATION_CATEGORIES, type NotificationCategoryId } from "@mcc/shared";
 import { prisma } from "../db.js";
 import { isDiscordEnabledFor } from "../services/notificationService.js";
-import { sendTestEmbed } from "../services/discordChannel.js";
-import { env } from "../env.js";
+import { DISCORD_WEBHOOK_PATTERN, getWebhook, maskWebhook, saveWebhook, sendTestEmbed } from "../services/discordChannel.js";
 
 const UpdateSettingSchema = z.object({ discordEnabled: z.boolean() });
+const CATEGORY_IDS = NOTIFICATION_CATEGORIES.map((c) => c.id) as [NotificationCategoryId, ...NotificationCategoryId[]];
+const CategorySchema = z.enum(CATEGORY_IDS).optional();
+const WebhookSchema = z.object({
+  url: z
+    .string()
+    .trim()
+    .regex(DISCORD_WEBHOOK_PATTERN, "That isn't a Discord webhook URL — it should look like https://discord.com/api/webhooks/…"),
+  category: CategorySchema,
+});
 
 export function registerNotificationRoutes(app: FastifyInstance): void {
   app.get("/api/notifications", async (request) => {
@@ -24,12 +32,45 @@ export function registerNotificationRoutes(app: FastifyInstance): void {
     }));
   });
 
+  /** Webhook URLs are never returned in full — only a masked hint. */
   app.get("/api/notification-settings", async () => {
     const results = [];
     for (const eventType of EVENT_TYPES) {
       results.push({ eventType, discordEnabled: await isDiscordEnabledFor(eventType) });
     }
-    return { discordConfigured: Boolean(env.DISCORD_WEBHOOK_URL), settings: results };
+    const webhook = await getWebhook();
+    const categories = [];
+    for (const c of NOTIFICATION_CATEGORIES) {
+      const resolved = await getWebhook(c.id);
+      categories.push({
+        id: c.id,
+        label: c.label,
+        eventTypes: c.eventTypes,
+        hasOwnWebhook: resolved?.source === "category",
+        webhookHint: resolved ? maskWebhook(resolved.url) : null,
+      });
+    }
+    return {
+      discordConfigured: Boolean(webhook),
+      webhookSource: webhook?.source ?? null,
+      webhookHint: webhook ? maskWebhook(webhook.url) : null,
+      categories,
+      settings: results,
+    };
+  });
+
+  app.put("/api/settings/discord-webhook", async (request, reply) => {
+    const body = WebhookSchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message ?? "Invalid URL" });
+    await saveWebhook(body.data.url, body.data.category);
+    return { ok: true, webhookHint: maskWebhook(body.data.url) };
+  });
+
+  app.delete("/api/settings/discord-webhook", async (request, reply) => {
+    const category = CategorySchema.safeParse((request.query as { category?: string }).category);
+    if (!category.success) return reply.code(400).send({ error: "Unknown category" });
+    await saveWebhook(null, category.data);
+    return { ok: true };
   });
 
   app.patch("/api/notification-settings/:eventType", async (request, reply) => {
@@ -48,8 +89,10 @@ export function registerNotificationRoutes(app: FastifyInstance): void {
     return setting;
   });
 
-  app.post("/api/notifications/test-discord", async (_request, reply) => {
-    const result = await sendTestEmbed();
+  app.post("/api/notifications/test-discord", async (request, reply) => {
+    const category = CategorySchema.safeParse((request.query as { category?: string }).category);
+    if (!category.success) return reply.code(400).send({ error: "Unknown category" });
+    const result = await sendTestEmbed(category.data);
     if (!result.ok) return reply.code(502).send({ ok: false, error: result.error });
     return { ok: true };
   });

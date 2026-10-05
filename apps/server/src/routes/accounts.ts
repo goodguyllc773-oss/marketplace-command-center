@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { LOGIN_START_URLS, hasSavedSession, openLoginWindow } from "@mcc/connectors";
+import { LOGIN_START_URLS, deleteBrowserProfile, hasSavedSession, openLoginWindow } from "@mcc/connectors";
 import { prisma } from "../db.js";
+import { saveEmailConfig } from "../services/emailSettings.js";
 import { getConnector } from "../services/connectorManager.js";
 import { runFullSync } from "../services/syncService.js";
 import { DEFAULT_INTERVAL_MS, stopWatchdog } from "../services/watchdogManager.js";
@@ -54,6 +55,10 @@ export function registerAccountRoutes(app: FastifyInstance): void {
     const { id } = request.params as { id: string };
     await stopWatchdog(id).catch(() => undefined);
     await prisma.platformAccount.delete({ where: { id } }).catch(() => undefined);
+    // Don't leave a removed account's credentials behind.
+    await saveEmailConfig(id, null);
+    await prisma.appSetting.deleteMany({ where: { key: `depopExtension:${id}` } });
+    await deleteBrowserProfile(id).catch(() => undefined);
     return reply.code(204).send();
   });
 
@@ -82,11 +87,20 @@ export function registerAccountRoutes(app: FastifyInstance): void {
       await openLoginWindow(id, loginUrl);
       return { ok: true };
     } catch (err) {
-      return reply.code(409).send({
-        error:
-          "Couldn't open a new login window — one may already be open for this account. Check your taskbar, or close it and try again.",
-        detail: err instanceof Error ? err.message : String(err),
-      });
+      const detail = err instanceof Error ? err.message : String(err);
+      if (/Executable doesn't exist/i.test(detail)) {
+        return reply.code(500).send({
+          error: "The browser this app uses isn't installed. In a terminal, run: npx playwright install chromium",
+          detail,
+        });
+      }
+      if (/ProcessSingleton|profile.*in use|user data directory is already in use/i.test(detail)) {
+        return reply.code(409).send({
+          error: "A login window is already open for this account — check your taskbar, or close it and try again.",
+          detail,
+        });
+      }
+      return reply.code(500).send({ error: `Couldn't open the login window: ${detail.split("\n")[0]}`, detail });
     }
   });
 

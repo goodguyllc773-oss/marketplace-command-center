@@ -1,7 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { conversationUrl } from "@mcc/connectors";
 import { prisma } from "../db.js";
 import { getConnector } from "../services/connectorManager.js";
+import { hydrateAndStore } from "../services/conversationHydration.js";
+import { recordEvents } from "../services/eventEngine.js";
+import { dispatchNotifications } from "../services/notificationService.js";
 
 const ListQuerySchema = z.object({
   platformId: z.string().optional(),
@@ -25,7 +29,11 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       },
     });
 
+    // Every platform gets a tab, even with nothing unread.
     const byPlatform = new Map<string, { platformId: string; platformKey: string; platformName: string; unread: number }>();
+    for (const p of await prisma.platform.findMany({ orderBy: { name: "asc" } })) {
+      byPlatform.set(p.id, { platformId: p.id, platformKey: p.key, platformName: p.name, unread: 0 });
+    }
     for (const c of unread) {
       const p = c.platformAccount.platform;
       const existing = byPlatform.get(p.id);
@@ -88,14 +96,64 @@ export function registerConversationRoutes(app: FastifyInstance): void {
     if (!conversation) return reply.code(404).send({ error: "Conversation not found" });
 
     let capabilities: readonly string[] = [];
+    let canLoadHistory = false;
     try {
       const connector = await getConnector(conversation.platformAccountId);
       capabilities = connector.supportedCapabilities;
+      canLoadHistory = typeof connector.hydrateConversation === "function";
     } catch {
       // account not yet connectable (e.g. real connector not implemented) — reply UI just disables
     }
 
-    return { ...conversation, capabilities };
+    // Plain status for the Inbox: has the full conversation been read yet?
+    // Facebook notices from the inbox preview don't appear as messages in
+    // the conversation view, so they aren't "waiting" to be read.
+    const hasPlaceholders = conversation.messages.some(
+      (m) => !m.externalMessageId.startsWith("facebook:") && m.direction !== "SYSTEM",
+    );
+    const hydrationState = !canLoadHistory
+      ? null
+      : conversation.hydratedAt && !hasPlaceholders
+        ? "HYDRATED"
+        : conversation.unread
+          ? "SKIPPED_UNREAD"
+          : "PENDING";
+
+    return {
+      ...conversation,
+      capabilities,
+      canLoadHistory,
+      hydrationState,
+      platformUrl: conversationUrl(conversation.platformAccount.platform.key, conversation.externalConversationId),
+    };
+  });
+
+  /** Manual "Load conversation history": reads the full thread from the
+   * platform's conversation view (read-only), with a deeper scroll limit
+   * than the automatic watchdog reads. An unread conversation comes back
+   * SKIPPED_UNREAD unless the user explicitly confirmed (`confirmUnread`). */
+  app.post("/api/conversations/:id/history", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const confirmUnread = (request.body as { confirmUnread?: unknown } | undefined)?.confirmUnread === true;
+    const conversation = await prisma.conversation.findUnique({ where: { id } });
+    if (!conversation) return reply.code(404).send({ error: "Conversation not found" });
+    const connector = await getConnector(conversation.platformAccountId);
+    if (!connector.hydrateConversation) {
+      return reply.code(400).send({ error: "This platform doesn't support loading conversation history" });
+    }
+    const outcome = await hydrateAndStore(connector, conversation, { manual: true, allowUnread: confirmUnread });
+    if (outcome.events.length > 0) {
+      await dispatchNotifications(await recordEvents(conversation.platformAccountId, outcome.events));
+    }
+    const { status, detail, reachedStart, messages } = outcome.result;
+    return {
+      status,
+      detail,
+      reachedStart,
+      messagesFound: messages.length,
+      added: outcome.added,
+      updated: outcome.updated,
+    };
   });
 
   app.post("/api/conversations/:id/reply", async (request, reply) => {

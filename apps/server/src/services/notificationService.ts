@@ -13,6 +13,7 @@ const DEFAULT_DISCORD_ENABLED: ReadonlySet<EventType> = new Set([
   "WATCHDOG_ERROR",
   "ACCOUNT_DISCONNECTED",
   "AUTHENTICATION_REQUIRED",
+  "PLATFORM_NOTIFICATION",
 ]);
 
 export async function isDiscordEnabledFor(eventType: string): Promise<boolean> {

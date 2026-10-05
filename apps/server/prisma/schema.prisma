@@ -138,6 +138,11 @@ model Conversation {
   unread                Boolean         @default(true)
   archived              Boolean         @default(false)
   createdAt             DateTime        @default(now())
+  // Conversation hydration (reading the full thread from the platform's
+  // conversation view): the platform's latest-message id at the last
+  // successful read, so an unchanged conversation is never re-read.
+  hydratedMessageId     String?
+  hydratedAt            DateTime?
 
   messages Message[]
 
@@ -151,7 +156,9 @@ model Message {
   externalMessageId String
   senderName       String
   body             String
-  direction        String // INBOUND | OUTBOUND
+  // INBOUND (buyer → me) | OUTBOUND (me → buyer) | SYSTEM (platform notice)
+  // | UNKNOWN (preview only, sender not yet known)
+  direction        String
   sentAt           DateTime
 
   @@unique([conversationId, externalMessageId])
@@ -163,15 +170,26 @@ model Message {
 
 model Offer {
   id                String          @id @default(cuid())
-  listingId         String
-  listing           Listing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  // Null for offers on someone else's item (you're buying).
+  listingId         String?
+  listing           Listing?        @relation(fields: [listingId], references: [id], onDelete: Cascade)
   platformAccountId String
   platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
   externalOfferId   String
   buyerName         String
   amount            Float
   currency          String          @default("USD")
-  status            String          @default("PENDING") // PENDING | ACCEPTED | DECLINED | EXPIRED | COUNTERED
+  status            String          @default("PENDING") // PENDING | SENT | ACCEPTED | DECLINED | EXPIRED | COUNTERED | ITEM_SOLD
+  /// SELLING = an offer on your item; BUYING = you're the buyer.
+  role              String          @default("SELLING")
+  /// Who made this offer amount: BUYER | SELLER (from "Your/Seller's/Buyer's offer").
+  offeredBy         String?
+  itemTitle         String?
+  itemUrl           String?
+  originalPrice     Float?
+  /// The platform's own wording, e.g. "Special offer from seller", "Buy before 6 October at 3pm".
+  statusLabel       String?
+  deadlineLabel     String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -289,4 +307,12 @@ model NotificationSetting {
   eventType      String   @id
   discordEnabled Boolean  @default(true)
   updatedAt      DateTime @updatedAt
+}
+
+// App-wide values the user edits on the Settings page (e.g. the Discord
+// webhook URL) instead of in apps/server/.env.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

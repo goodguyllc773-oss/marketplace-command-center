@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "MCC Depop Reader",
+  "version": "0.4.1",
+  "description": "Passes the Depop messages page you have open to Marketplace Command Center on this computer. Never opens conversations or sends anything; optionally clicks Depop's own Refresh button and Offers/Chat tabs.",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": ["http://127.0.0.1:4000/*", "http://localhost:4000/*", "https://www.depop.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.depop.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "action": { "default_title": "MCC Depop Reader — settings and status" }
+}

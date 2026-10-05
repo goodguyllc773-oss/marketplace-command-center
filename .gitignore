@@ -17,3 +17,10 @@ coverage/
 # these hold live login cookies, never commit them under any circumstance.
 .browser-profiles/
 **/.browser-profiles/
+
+# Local DB backups
+*.db.backup*
+
+# Temporary local inspection output (holds personal page data)
+.inspect/
+_inspect*

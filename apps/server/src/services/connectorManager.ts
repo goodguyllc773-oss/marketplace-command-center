@@ -1,5 +1,7 @@
-import { createMockConnector, createBrowserConnector, type MarketplaceConnector } from "@mcc/connectors";
+import { createMockConnector, createBrowserConnector, EMAIL_PLATFORM_IDS, type MarketplaceConnector } from "@mcc/connectors";
 import { prisma } from "../db.js";
+import { getEmailConfig } from "./emailSettings.js";
+import { env } from "../env.js";
 
 /**
  * Holds live connector instances in memory, keyed by PlatformAccount id.
@@ -18,23 +20,34 @@ export async function getConnector(platformAccountId: string): Promise<Marketpla
     include: { platform: true },
   });
 
-  const connector = resolveConnector(account.platform.key, account.platform.kind, account.id, account.label, account.externalAccountId);
+  const connector = await resolveConnector(account.platform.key, account.platform.kind, account.id, account.label, account.externalAccountId);
   liveConnectors.set(platformAccountId, connector);
   return connector;
 }
 
-function resolveConnector(
+async function resolveConnector(
   platformKey: string,
   kind: string,
   accountId: string,
   label: string,
   externalAccountId: string,
-): MarketplaceConnector {
+): Promise<MarketplaceConnector> {
   if (kind === "mock") {
     return createMockConnector(platformKey, accountId, label);
   }
   if (kind === "browser") {
-    return createBrowserConnector(platformKey, accountId, externalAccountId);
+    const email = EMAIL_PLATFORM_IDS.includes(platformKey) ? ((await getEmailConfig(accountId)) ?? undefined) : undefined;
+    return createBrowserConnector(platformKey, accountId, externalAccountId, {
+      email,
+      facebookHydration: {
+        perCycle: env.FB_HYDRATIONS_PER_CYCLE,
+        pauseBetweenMs: env.FB_HYDRATION_PAUSE_MS,
+        maxScrolls: env.FB_HYDRATION_MAX_SCROLLS,
+        manualMaxScrolls: env.FB_HYDRATION_MANUAL_MAX_SCROLLS,
+        scrollWaitMs: env.FB_HYDRATION_SCROLL_WAIT_MS,
+        pageTimeoutMs: env.FB_HYDRATION_PAGE_TIMEOUT_MS,
+      },
+    });
   }
   throw new Error(`Unknown connector kind "${kind}" for platform "${platformKey}"`);
 }

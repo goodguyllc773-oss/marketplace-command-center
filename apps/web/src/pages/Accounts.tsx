@@ -61,7 +61,7 @@ export default function Accounts() {
             disabled={seedMutation.isPending}
             className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-base-950 hover:bg-accent/90 disabled:opacity-50"
           >
-            {seedMutation.isPending ? "Seeding…" : "Seed built-in mock platforms (Depop, Facebook, eBay)"}
+            {seedMutation.isPending ? "Seeding…" : "Add supported platforms"}
           </button>
         ) : (
           <div className="flex flex-wrap gap-2">
@@ -123,9 +123,9 @@ export default function Accounts() {
         </form>
         {selectedPlatform?.key === "depop-live" && (
           <p className="mt-2 text-xs text-slate-500">
-            Reads your Depop shop's public listings only — no login, no password. Listings capability only for now;
-            messages/offers need a real login session and aren't built yet. Syncs gently (every 5 min by default) out
-            of respect for the real site.
+            Enter your Depop username (from depop.com/<em>username</em>). Watches your shop's public listings — new,
+            sold, and removed — with no login. Depop blocks automated sign-in, so Depop messages and offers can't be
+            watched here. Checks gently (every 5 min by default) so Depop doesn't block it.
           </p>
         )}
         {selectedPlatform?.key === "facebook-live" && (
@@ -169,7 +169,11 @@ export default function Accounts() {
                 <LoginControl accountId={acc.id} />
                 <button
                   onClick={() => {
-                    if (confirm(`Remove ${acc.platform.name} / ${acc.label}? This stops its watchdog too.`)) {
+                    if (
+                      confirm(
+                        `Remove ${acc.platform.name} / ${acc.label}? This stops its watchdog and deletes its saved login and email connection.`,
+                      )
+                    ) {
                       removeMutation.mutate(acc.id);
                     }
                   }}
@@ -178,10 +182,172 @@ export default function Accounts() {
                   Remove
                 </button>
               </div>
+              {acc.platform.key === "depop-live" && <DepopExtensionControl accountId={acc.id} />}
+              {acc.platform.key === "depop-live" && <EmailControl accountId={acc.id} />}
             </div>
           ))}
         </div>
       </Card>
+    </div>
+  );
+}
+
+/** Each Depop shop reads its own mailbox for messages/offers/sales emails. */
+function EmailControl({ accountId }: { accountId: string }) {
+  const qc = useQueryClient();
+  const statusQuery = useQuery({ queryKey: ["account-email", accountId], queryFn: () => api.email.get(accountId) });
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ user: "", password: "", host: "imap.gmail.com", matchTo: "" });
+  const refresh = () => qc.invalidateQueries({ queryKey: ["account-email", accountId] });
+  const connectMutation = useMutation({
+    mutationFn: () => api.email.connect(accountId, form),
+    onSuccess: () => {
+      setForm((f) => ({ ...f, password: "" }));
+      setOpen(false);
+      refresh();
+    },
+  });
+  const disconnectMutation = useMutation({ mutationFn: () => api.email.disconnect(accountId), onSuccess: refresh });
+  const status = statusQuery.data;
+
+  return (
+    <div className="w-full border-t border-base-700 pt-2 text-xs">
+      {status?.connected ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-emerald-400">
+            ● Email: {status.user}
+            {status.matchTo && <span className="text-slate-400"> (only mail to {status.matchTo})</span>}
+          </span>
+          <span className="text-slate-500">
+            alerts for emails after {status.connectedAt ? new Date(status.connectedAt).toLocaleString() : "—"}
+          </span>
+          <button
+            onClick={() => {
+              if (confirm("Disconnect this email? This shop's Depop messages and offers will stop being watched.")) {
+                disconnectMutation.mutate();
+              }
+            }}
+            className="text-slate-500 underline hover:text-slate-300"
+          >
+            disconnect
+          </button>
+        </div>
+      ) : !open ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-slate-500">
+            Email not connected — Depop messages, offers, and purchases come from Depop's notification emails.
+          </span>
+          <button onClick={() => setOpen(true)} className="text-accent hover:underline">
+            Connect email
+          </button>
+        </div>
+      ) : (
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            connectMutation.mutate();
+          }}
+        >
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Email address">
+              <input
+                type="email"
+                autoComplete="username"
+                value={form.user}
+                onChange={(e) => setForm((f) => ({ ...f, user: e.target.value }))}
+                className="w-56 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="App Password">
+              <input
+                type="password"
+                autoComplete="off"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                className="w-44 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="IMAP server">
+              <input
+                value={form.host}
+                onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
+                className="w-36 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="Depop sign-up email (optional)">
+              <input
+                type="email"
+                value={form.matchTo}
+                onChange={(e) => setForm((f) => ({ ...f, matchTo: e.target.value }))}
+                placeholder="only if shops share an inbox"
+                className="w-56 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <button
+              type="submit"
+              disabled={!form.user || !form.password || connectMutation.isPending}
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-base-950 hover:bg-accent/90 disabled:opacity-50"
+            >
+              {connectMutation.isPending ? "Checking…" : "Connect"}
+            </button>
+            <button type="button" onClick={() => setOpen(false)} className="px-1 py-1.5 text-slate-500 hover:text-slate-300">
+              Cancel
+            </button>
+          </div>
+          <p className="text-slate-500">
+            Read-only, and only emails from depop.com. Gmail needs an App Password (
+            <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-accent hover:underline">
+              myaccount.google.com/apppasswords
+            </a>
+            , 2-Step Verification on). If two Depop shops get email at the same inbox (e.g. Gmail +aliases), fill in each
+            shop's Depop sign-up email so they don't mix.
+          </p>
+        </form>
+      )}
+      {connectMutation.isError && (
+        <p className="mt-1 text-rose-400">
+          {connectMutation.error instanceof Error ? connectMutation.error.message : "Couldn't connect"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Seen within this long = the Depop messages tab is still open (the
+ * extension checks in every minute; background tabs can be throttled). */
+const EXTENSION_LIVE_MS = 3 * 60_000;
+
+/** Status of the "MCC Depop Reader" Chrome extension for this shop. */
+function DepopExtensionControl({ accountId }: { accountId: string }) {
+  const { data: s } = useQuery({
+    queryKey: ["extension-status", accountId],
+    queryFn: () => api.accounts.extensionStatus(accountId),
+    refetchInterval: 30_000,
+  });
+  const live = !!s && Date.now() - new Date(s.lastSeenAt).getTime() < EXTENSION_LIVE_MS;
+
+  return (
+    <div className="w-full border-t border-base-700 pt-2 text-xs">
+      {live ? (
+        <span className="text-emerald-400">
+          ● Chrome extension: Depop messages tab open
+          <span className="text-slate-500">
+            {" "}
+            {s.conversations !== undefined && ` · ${s.conversations} conversations`} · last check-in{" "}
+            {new Date(s.lastSeenAt).toLocaleTimeString()}
+            {s.autoRefresh
+              ? ` · auto-refresh every ${s.refreshMinutes ?? 3} min${s.lastRefreshAt ? `, last ${new Date(s.lastRefreshAt).toLocaleTimeString()}` : ""}`
+              : " · auto-refresh off"}
+          </span>
+          {s.refreshProblem && <span className="block text-amber-400">{s.refreshProblem}</span>}
+        </span>
+      ) : (
+        <span className="text-slate-500">
+          Chrome extension: {s ? `not seen since ${new Date(s.lastSeenAt).toLocaleString()}` : "not set up"} — open
+          depop.com/messages in your Chrome (with the MCC Depop Reader extension) and leave it open.
+        </span>
+      )}
     </div>
   );
 }

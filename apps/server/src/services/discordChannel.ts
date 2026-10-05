@@ -1,4 +1,5 @@
 import type { Event as EventRow } from "@prisma/client";
+import { NOTIFICATION_CATEGORIES, categoryForEvent, type NotificationCategoryId } from "@mcc/shared";
 import { env } from "../env.js";
 import { prisma } from "../db.js";
 import { parseEventPayload } from "./eventEngine.js";
@@ -26,6 +27,17 @@ const COLOR = {
  */
 async function buildEmbed(row: EventRow, platformName: string, accountLabel: string): Promise<DiscordEmbed | null> {
   const payload = parseEventPayload<Record<string, unknown>>(row);
+
+  // Events built from platform emails carry a ready-made one-line summary.
+  if (typeof payload.summary === "string") {
+    return {
+      title: `${SUMMARY_TITLES[row.type] ?? "📬 Notification"} — ${platformName}`,
+      description: payload.summary,
+      color: row.type === "PLATFORM_NOTIFICATION" ? COLOR.gray : COLOR.gold,
+      fields: [{ name: "Account", value: accountLabel, inline: true }],
+      timestamp: row.timestamp.toISOString(),
+    };
+  }
 
   switch (row.type) {
     case "MESSAGE_RECEIVED":
@@ -65,6 +77,7 @@ async function buildEmbed(row: EventRow, platformName: string, accountLabel: str
         { name: "Account", value: accountLabel, inline: true },
         { name: "Item", value: String(payload.listingTitle ?? "—"), inline: false },
         { name: "Sale", value: money(Number(payload.salePrice ?? 0)), inline: true },
+        ...(payload.buyerName ? [{ name: "Buyer", value: String(payload.buyerName), inline: true }] : []),
       ];
       if (sale) {
         fields.push(
@@ -76,6 +89,32 @@ async function buildEmbed(row: EventRow, platformName: string, accountLabel: str
       }
       return { title: "🟢 Item Sold", color: COLOR.green, fields, timestamp: row.timestamp.toISOString() };
     }
+
+    case "LISTING_REMOVED":
+      return {
+        title: `⚠️ ${platformName} Listing Taken Down`,
+        description: typeof payload.reason === "string" ? payload.reason : undefined,
+        color: COLOR.red,
+        fields: listingFields(payload, accountLabel),
+        timestamp: row.timestamp.toISOString(),
+      };
+
+    case "LISTING_CREATED":
+      return {
+        title: `🆕 New ${platformName} Listing`,
+        color: COLOR.green,
+        fields: listingFields(payload, accountLabel),
+        timestamp: row.timestamp.toISOString(),
+      };
+
+    case "LISTING_UPDATED":
+      return {
+        title: `✏️ ${platformName} Listing Updated`,
+        description: typeof payload.change === "string" ? payload.change : undefined,
+        color: COLOR.gray,
+        fields: listingFields(payload, accountLabel),
+        timestamp: row.timestamp.toISOString(),
+      };
 
     case "ACCOUNT_DISCONNECTED":
       return {
@@ -113,8 +152,26 @@ async function buildEmbed(row: EventRow, platformName: string, accountLabel: str
   }
 }
 
+const SUMMARY_TITLES: Record<string, string> = {
+  OFFER_RECEIVED: "🟡 Offer",
+  OFFER_ACCEPTED: "🟢 Offer Accepted",
+  ORDER_CREATED: "📦 Purchase Confirmed",
+  SHIPMENT_UPDATED: "📦 Order Shipped",
+  PLATFORM_NOTIFICATION: "📬 Notification",
+};
+
 function money(n: number): string {
   return `$${n.toFixed(2)}`;
+}
+
+function listingFields(payload: Record<string, unknown>, accountLabel: string) {
+  const fields = [
+    { name: "Account", value: accountLabel, inline: true },
+    { name: "Item", value: String(payload.listingTitle ?? "—"), inline: true },
+  ];
+  if (typeof payload.price === "number") fields.push({ name: "Price", value: money(payload.price), inline: true });
+  if (typeof payload.url === "string") fields.push({ name: "Link", value: payload.url, inline: false });
+  return fields;
 }
 
 export interface DiscordSendResult {
@@ -122,32 +179,77 @@ export interface DiscordSendResult {
   error?: string;
 }
 
+export const DISCORD_WEBHOOK_PATTERN = /^https:\/\/(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+const NO_WEBHOOK = "No Discord webhook set — add one on the Settings page";
+
+export type WebhookSource = "category" | "app" | "env";
+
+/** `category` undefined = the default webhook. Stored as
+ * `discordWebhookUrl` / `discordWebhookUrl:<category>` in AppSetting. */
+function webhookKey(category?: NotificationCategoryId): string {
+  return category ? `discordWebhookUrl:${category}` : "discordWebhookUrl";
+}
+
+/** Resolution order: the category's own webhook → the default webhook
+ * saved on the Settings page → DISCORD_WEBHOOK_URL in .env. */
+export async function getWebhook(category?: NotificationCategoryId): Promise<{ url: string; source: WebhookSource } | null> {
+  if (category) {
+    const own = await prisma.appSetting.findUnique({ where: { key: webhookKey(category) } });
+    if (own?.value) return { url: own.value, source: "category" };
+  }
+  const saved = await prisma.appSetting.findUnique({ where: { key: webhookKey() } });
+  if (saved?.value) return { url: saved.value, source: "app" };
+  if (env.DISCORD_WEBHOOK_URL) return { url: env.DISCORD_WEBHOOK_URL, source: "env" };
+  return null;
+}
+
+export async function saveWebhook(url: string | null, category?: NotificationCategoryId): Promise<void> {
+  const key = webhookKey(category);
+  if (url) {
+    await prisma.appSetting.upsert({ where: { key }, create: { key, value: url }, update: { value: url } });
+  } else {
+    await prisma.appSetting.deleteMany({ where: { key } });
+  }
+}
+
+/** Anyone holding the full URL can post to the channel, so the UI only
+ * ever gets the webhook id and the token's last 4 characters. */
+export function maskWebhook(url: string): string {
+  const m = url.match(/\/webhooks\/(\d+)\/([\w-]+)$/);
+  return m ? `…/webhooks/${m[1]}/••••${m[2].slice(-4)}` : "••••";
+}
+
 export async function sendEventToDiscord(
   row: EventRow,
   platformName: string,
   accountLabel: string,
 ): Promise<DiscordSendResult> {
-  if (!env.DISCORD_WEBHOOK_URL) return { ok: false, error: "No DISCORD_WEBHOOK_URL configured" };
+  const webhook = await getWebhook(categoryForEvent(row.type));
+  if (!webhook) return { ok: false, error: NO_WEBHOOK };
 
   const embed = await buildEmbed(row, platformName, accountLabel);
   if (!embed) return { ok: false, error: "No embed for this event type" };
 
-  return postEmbed(embed);
+  return postEmbed(webhook.url, embed);
 }
 
-export async function sendTestEmbed(): Promise<DiscordSendResult> {
-  if (!env.DISCORD_WEBHOOK_URL) return { ok: false, error: "No DISCORD_WEBHOOK_URL configured" };
-  return postEmbed({
+export async function sendTestEmbed(category?: NotificationCategoryId): Promise<DiscordSendResult> {
+  const webhook = await getWebhook(category);
+  if (!webhook) return { ok: false, error: NO_WEBHOOK };
+  const label = NOTIFICATION_CATEGORIES.find((c) => c.id === category)?.label;
+  return postEmbed(webhook.url, {
     title: "✅ Marketplace Command Center",
-    description: "Test notification — Discord delivery is working.",
+    description: label
+      ? `Test notification — **${label}** alerts will arrive in this channel.`
+      : "Test notification — Discord delivery is working.",
     color: COLOR.green,
     timestamp: new Date().toISOString(),
   });
 }
 
-async function postEmbed(embed: DiscordEmbed): Promise<DiscordSendResult> {
+async function postEmbed(url: string, embed: DiscordEmbed): Promise<DiscordSendResult> {
   try {
-    const res = await fetch(env.DISCORD_WEBHOOK_URL!, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ embeds: [embed] }),

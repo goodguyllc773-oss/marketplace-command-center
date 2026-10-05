@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type ConversationFilters, type ConversationListItem } from "../api.js";
+import {
+  api,
+  type ConversationDetail,
+  type ConversationFilters,
+  type ConversationListItem,
+  type LoadHistoryResult,
+} from "../api.js";
 import { money } from "../components/Card.js";
 
 function useDebounced<T>(value: T, delayMs: number): T {
@@ -31,6 +37,9 @@ export default function Inbox() {
   const [searchInput, setSearchInput] = useState("");
   const q = useDebounced(searchInput, 300);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Platform-side unread state at the moment it was opened here (opening
+  // it in MCC clears MCC's own flag immediately).
+  const [selectedWasUnread, setSelectedWasUnread] = useState(false);
   const [draft, setDraft] = useState("");
 
   const summaryQuery = useQuery({ queryKey: ["inbox-summary"], queryFn: api.inbox.summary, refetchInterval: 10_000 });
@@ -75,8 +84,23 @@ export default function Inbox() {
     onSuccess: invalidateInbox,
   });
 
+  const historyMutation = useMutation({
+    mutationFn: async (confirmUnread: boolean) => {
+      const result = await api.conversations.loadHistory(selectedId!, confirmUnread);
+      // Facebook says unread though MCC didn't know: ask now, before any
+      // conversation is opened.
+      if (result.status === "SKIPPED_UNREAD" && !confirmUnread && confirm(UNREAD_CONFIRM)) {
+        return api.conversations.loadHistory(selectedId!, true);
+      }
+      return result;
+    },
+    onSuccess: invalidateInbox,
+  });
+
   const openConversation = (c: ConversationListItem) => {
     setSelectedId(c.id);
+    setSelectedWasUnread(c.unread);
+    historyMutation.reset();
     if (c.unread) {
       api.conversations.patch(c.id, { unread: false }).then(invalidateInbox);
     }
@@ -106,7 +130,7 @@ export default function Inbox() {
           {platforms.map((p) => (
             <FilterPill
               key={p.platformId}
-              label={p.platformName.toUpperCase()}
+              label={p.platformName.replace(/\s*\(Live\)$/i, "").toUpperCase()}
               count={p.unread}
               active={platformId === p.platformId}
               onClick={() => setPlatformId(p.platformId)}
@@ -194,15 +218,55 @@ export default function Inbox() {
                     {detailQuery.data.listing && <> · {detailQuery.data.listing.title}</>}
                     {detailQuery.data.listing?.price !== undefined && <> ({money(detailQuery.data.listing.price)})</>}
                   </div>
-                  {detailQuery.data.listing?.url && (
-                    <a
-                      href={detailQuery.data.listing.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-accent hover:underline"
-                    >
-                      View listing ↗
-                    </a>
+                  <div className="flex flex-wrap gap-3">
+                    {detailQuery.data.platformUrl && (
+                      <a
+                        href={detailQuery.data.platformUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-accent hover:underline"
+                      >
+                        Open in {detailQuery.data.platformAccount.platform.name.replace(/\s*\(Live\)$/i, "")} ↗
+                      </a>
+                    )}
+                    {detailQuery.data.listing?.url && (
+                      <a
+                        href={detailQuery.data.listing.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-accent hover:underline"
+                      >
+                        View listing ↗
+                      </a>
+                    )}
+                  </div>
+                  {detailQuery.data.canLoadHistory && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <button
+                        onClick={() => {
+                          // Known unread → ask before contacting Facebook at all;
+                          // cancel means no Facebook activity.
+                          const knownUnread =
+                            selectedWasUnread || detailQuery.data!.hydrationState === "SKIPPED_UNREAD";
+                          if (knownUnread) {
+                            if (confirm(UNREAD_CONFIRM)) historyMutation.mutate(true);
+                            return;
+                          }
+                          historyMutation.mutate(false);
+                        }}
+                        disabled={historyMutation.isPending}
+                        className="rounded-md border border-base-600 px-2 py-0.5 text-slate-300 hover:bg-base-700 disabled:opacity-50"
+                      >
+                        Load conversation history
+                      </button>
+                      <HydrationBadge
+                        pending={historyMutation.isPending}
+                        result={historyMutation.data}
+                        requestError={historyMutation.isError ? historyMutation.error : null}
+                        state={detailQuery.data.hydrationState}
+                        hydratedAt={detailQuery.data.hydratedAt}
+                      />
+                    </div>
                   )}
                 </div>
                 <div className="flex shrink-0 gap-2">
@@ -222,18 +286,29 @@ export default function Inbox() {
               </div>
 
               <div className="flex-1 space-y-2 overflow-y-auto p-3">
-                {detailQuery.data.messages.map((m) => (
-                  <div key={m.id} className={`flex ${m.direction === "OUTBOUND" ? "justify-end" : "justify-start"}`}>
-                    <div
-                      className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
-                        m.direction === "OUTBOUND" ? "bg-accent/20 text-slate-100" : "bg-base-800 text-slate-200"
-                      }`}
-                    >
-                      <div>{m.body}</div>
-                      <div className="mt-1 text-[10px] text-slate-500">{new Date(m.sentAt).toLocaleString()}</div>
+                {detailQuery.data.messages.map((m) =>
+                  m.direction === "SYSTEM" ? (
+                    <div key={m.id} className="mx-auto max-w-[85%] rounded-md border border-dashed border-base-700 px-3 py-1.5 text-center">
+                      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Facebook</div>
+                      <div className="text-xs italic text-slate-400">{m.body}</div>
+                      <div className="text-[10px] text-slate-600">{new Date(m.sentAt).toLocaleString()}</div>
                     </div>
-                  </div>
-                ))}
+                  ) : (
+                    <div key={m.id} className={`flex ${m.direction === "OUTBOUND" ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
+                          m.direction === "OUTBOUND" ? "bg-accent/20 text-slate-100" : "bg-base-800 text-slate-200"
+                        }`}
+                      >
+                        <div className="mb-0.5 text-[10px] font-medium text-slate-400">
+                          {m.direction === "OUTBOUND" ? "You" : m.direction === "UNKNOWN" ? "Unknown sender" : m.senderName}
+                        </div>
+                        <div>{m.body}</div>
+                        <div className="mt-1 text-[10px] text-slate-500">{new Date(m.sentAt).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  ),
+                )}
               </div>
 
               <div className="border-t border-base-700 p-3">
@@ -277,6 +352,53 @@ export default function Inbox() {
       </div>
     </div>
   );
+}
+
+const UNREAD_CONFIRM = "Opening this unread Facebook conversation may mark it as read on Facebook. Continue?";
+
+const FAILURE_TEXT: Record<string, { kind: "attention" | "failed"; text: string }> = {
+  AUTH_REQUIRED: { kind: "attention", text: "log in to Facebook again on the Accounts page" },
+  RATE_LIMITED: { kind: "attention", text: "Facebook asked to slow down — try again later" },
+  NO_HISTORY_FOUND: { kind: "failed", text: "no messages showed up for this conversation" },
+  PIN_DIALOG_PRESENT: { kind: "failed", text: "Facebook didn't show this conversation" },
+  TIMEOUT: { kind: "failed", text: "Facebook took too long — try again" },
+  PAGE_ERROR: { kind: "failed", text: "couldn't load it from Facebook — try again" },
+  UNKNOWN_ERROR: { kind: "failed", text: "something went wrong — try again" },
+};
+
+/** Plain-language hydration status: Hydrated / Hydrating… / Skipped —
+ * unread / Needs attention / Failed. */
+function HydrationBadge({
+  pending,
+  result,
+  requestError,
+  state,
+  hydratedAt,
+}: {
+  pending: boolean;
+  result?: LoadHistoryResult;
+  requestError: unknown;
+  state: ConversationDetail["hydrationState"];
+  hydratedAt: string | null;
+}) {
+  if (pending) return <span className="text-slate-400">Hydrating…</span>;
+  if (requestError) return <span className="text-rose-400">Failed — couldn't reach MCC's server</span>;
+  if (result && result.status === "SUCCESS") {
+    return (
+      <span className="text-emerald-400">
+        Hydrated · {result.messagesFound} messages{result.added ? ` (${result.added} new)` : ""}
+        {result.reachedStart ? " · full history" : ""}
+      </span>
+    );
+  }
+  if (result?.status === "SKIPPED_UNREAD") return <span className="text-slate-400">Skipped — unread</span>;
+  if (result) {
+    const f = FAILURE_TEXT[result.status] ?? FAILURE_TEXT.UNKNOWN_ERROR;
+    return <span className={f.kind === "attention" ? "text-amber-400" : "text-rose-400"}>{f.kind === "attention" ? "Needs attention" : "Failed"} — {f.text}</span>;
+  }
+  if (state === "HYDRATED") return <span className="text-slate-500">Hydrated{hydratedAt ? ` · ${timeAgo(hydratedAt)}` : ""}</span>;
+  if (state === "SKIPPED_UNREAD") return <span className="text-slate-500">Skipped — unread (read it on Facebook first, or load it anyway)</span>;
+  return <span className="text-slate-600">Not loaded yet</span>;
 }
 
 function FilterPill({

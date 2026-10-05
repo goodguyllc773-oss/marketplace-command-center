@@ -1,12 +1,21 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type ListingFilters } from "../api.js";
+import { api, type ListingFilters, type ListingItem } from "../api.js";
 import { Card, money } from "../components/Card.js";
 
 const STATUSES = ["DRAFT", "ACTIVE", "SOLD", "REMOVED"];
 
 function metric(n: number | null): string {
   return n === null ? "N/A" : String(n);
+}
+
+function statusNote(l: ListingItem): string | undefined {
+  if (!l.metadataJson) return undefined;
+  try {
+    return JSON.parse(l.metadataJson).statusNote;
+  } catch {
+    return undefined;
+  }
 }
 
 export default function Listings() {
@@ -142,7 +151,12 @@ export default function Listings() {
                     {l.platformAccount.platform.name} / {l.platformAccount.label}
                   </td>
                   <td className="py-2 text-right">{money(l.price)}</td>
-                  <td className="py-2 text-slate-300">{l.status}</td>
+                  <td className="py-2">
+                    <span className={l.status === "REMOVED" ? "text-rose-400" : "text-slate-300"}>
+                      {l.status === "REMOVED" ? "TAKEN DOWN" : l.status}
+                    </span>
+                    {statusNote(l) && <div className="mt-0.5 max-w-56 text-[10px] text-rose-300/80">{statusNote(l)}</div>}
+                  </td>
                   <td className="py-2 text-right text-slate-400">{metric(l.views)}</td>
                   <td className="py-2 text-right text-slate-400">{metric(l.likes)}</td>
                   <td className="py-2 text-right text-slate-400">{metric(l.watchers)}</td>

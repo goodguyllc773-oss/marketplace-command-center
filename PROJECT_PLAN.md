@@ -76,8 +76,10 @@ Watchdog.
 10. Discord notifications — **done** (desktop notifications also done, ahead of Phase 17 numbering)
 11. Watchdog manager UI + health center — **done**
 12. Real connector #1 (Depop, listings-only) — **done**
-13. Real connector #2+ (Facebook) — infrastructure done, blocked on live
-    login (see below) — not yet a working scraper
+13. Real connector #2+ (Facebook) — **done 2026-10-05**: listings
+    (incl. taken-down detection) + seller messages, read from the user's
+    own logged-in session, verified live, Discord alerts delivered. See
+    HANDOFF.md "How the Facebook watcher works".
 
 Phases 1–6 reached a runnable, demo-able vertical slice: mock data flows
 end-to-end from connector → event engine (with working dedup) → DB →
@@ -285,14 +287,25 @@ account regardless of platform, which is how several unrelated accounts —
 including mock ones — ended up with harmless empty `.browser-profiles/`
 directories as a side effect.
 
-**Still unresolved**: after the user's test, `apps/server/.browser-profiles/
-<their account id>/` was completely empty on disk — no Chromium profile
-data at all, despite them seeing a real window and completing login. Not
-yet explained. Asked the user to retry with the fixed code (their running
-`tsx watch`/Vite dev server should have already picked up the fix live)
-and report what the status shows after actually closing the login window
-— this is exactly where the session paused for the day, mid-investigation,
-not resolved.
+**Empty-profile mystery — solved (2026-10-05)**: every Facebook profile
+folder was empty because the login launch never got as far as Chromium
+writing anything. Playwright failed with `Executable doesn't exist at
+...\AppData\Local\ms-playwright\chromium-1243\chrome-win64\chrome.exe`.
+The cause: Claude's tool sandbox gets its own private view of
+`AppData\Local`. The `npx playwright install chromium` run from that
+sandbox on 2026-09-16 put the browser only in the sandbox's copy. From the
+user's real session the whole `ms-playwright` folder didn't exist (checked
+with a `dir` run via `explorer.exe`). The profile folder is `mkdir`'d
+before the launch, so each failed launch left an empty folder. The route
+had also been masking this: every launch failure was reported as "a login
+window may already be open". It now reports the real cause: a missing
+browser gets an install instruction, a real profile lock gets the
+"already open" message, and anything else shows the raw error.
+`openLoginWindow` also logs `[login-window]` lines (profile path, launch
+result, file count). Fix: install Chromium from the user's session, not
+from Claude's tools (see HANDOFF.md). The same applies to the headless
+Depop connector: on a server started in the user's session it needs that
+install too.
 
 Phases 7+ are substantial features in their own right and will be built in
 follow-up sessions, reviewed incrementally rather than dumped in one pass.
