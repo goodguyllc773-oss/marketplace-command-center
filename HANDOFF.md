@@ -4,19 +4,26 @@ Read this first, every time, before touching anything else. Update it
 before you stop and immediately before any context compaction (see
 CLAUDE.md for the exact rule).
 
-_Last updated 2026-10-05 (Windows box), mid-session. Today:_
-- _**The Facebook watchdog now works for real.** It reads the user's own
-  listings, taken-down listings, and Marketplace messages every 2 min,
-  and sends Discord alerts._
-- _Also solved the empty-profile mystery (Claude's sandbox has a private
-  `AppData`)._
-- _Removed all sample data and made mock platforms opt-in._
-- _Added CLAUDE.md + this file._
+_Last updated 2026-10-05 (Windows box), end of session. **Where we left
+off:** everything is committed. Facebook and Depop are both monitored for
+real. Depop messages and offers come through the **MCC Depop Reader**
+Chrome extension, which is running in the user's Chrome right now
+(v0.4.1, auto-refresh every 3 min, Offers check every 5 min). **Next job:
+multiple Depop accounts** (see "What's next" at the bottom). Today:_
+- _The Facebook watchdog works for real (listings, takedowns, messages,
+  full conversation hydration), with Discord alerts._
+- _Depop: public shop watcher + per-account email + the Depop Reader
+  extension (the Inbox list, full conversations when opened, the Offers
+  tab → the new Offers page), with Discord alerts._
+- _MCC's own automated browser is blocked by Depop (403). Don't retry it
+  or work around it; see the Depop sections._
+- _Removed all sample data and made mock platforms opt-in. Added
+  CLAUDE.md + this file._
 
 ## Current state
 
-- **Branch:** main. Last commit `7af5dd5`. Today's work is not committed
-  yet; check `git status`. **No git remote**, so commit only.
+- **Branch:** `master` (the only branch). Last commit: today's work (see
+  `git log -1`), on top of `44d38a0`. **No git remote**, so commit only.
 - **Dev servers:** started with `explorer.exe
   "C:\Users\xalex\marketplace-command-center\start-dev.cmd"`, which opens
   a console window in the user's session. API on 127.0.0.1:4000, web on
@@ -24,10 +31,15 @@ _Last updated 2026-10-05 (Windows box), mid-session. Today:_
 - **Playwright Chromium (v1243) is installed in the user's real
   AppData** (done via an `explorer.exe`-launched script).
 - **DB contents:**
-  - Only real data. Account: Facebook (Live) / Personal
-    (`cmu56nxuz0016nz4s5m325iy1`). The user is logged in; the session is in
-    `apps/server/.browser-profiles/cmu56nxuz…/`.
-  - Its watchdog is RUNNING, every 120 s, stale after 480 s.
+  - Only real data. Accounts:
+    - Facebook (Live) / Personal (`cmu56nxuz0016nz4s5m325iy1`). The user
+      is logged in; the session is in
+      `apps/server/.browser-profiles/cmu56nxuz…/`.
+    - Depop (Live) / Reselling, username `dsgnr_ex`
+      (`cmuvm9dgt006bed7chlyhlcpw`). Its email is connected, and the
+      Depop Reader extension is mapped to it. In the DB: 11 Inbox
+      conversations, 9 offers (all buying-side).
+  - Both watchdogs are RUNNING, every 120 s, stale after 480 s.
   - The 24 NotificationSetting rows are the user's Discord preferences.
     `LISTING_REMOVED` was switched ON today, at the user's request for
     takedown alerts.
@@ -563,7 +575,38 @@ E2EE and render behind the "Enter your PIN to restore your chats" dialog
 4. Inbox reads the first ~2 pages of seller threads (~20 most recent).
    New activity always bubbles to the top, so that's enough for alerts.
 
-## What's next
+5. **Depop extension, not yet seen live:** a brand-new Depop message or
+   offer change arriving while the tab sits idle (auto-refresh, then a
+   snapshot, then Inbox/Offers and Discord). Code paths are exercised
+   only by replaying real captured pages. Also unseen: a buyer's offer on
+   one of the user's own listings ("Buyer's offer" wording).
+6. **Depop offer alerts can double up** with the Depop email alerts for
+   the same buying-side counter offer or acceptance (no shared id to
+   dedupe on).
 
-Nothing queued. Pick up wherever the user directs; item 1 will confirm
-itself the next time a buyer messages.
+## What's next — multiple Depop accounts (the user asked, 2026-10-05)
+
+Already per-account: the shop watcher, email (with `matchTo` for shared
+inboxes), and everything the extension feeds (status, Inbox, Offers,
+alerts, the offline alert). The real limit is that **one Chrome profile
+= one Depop login**. Each extra shop needs its own Chrome profile, signed
+into that Depop account, with the extension loaded there too and its
+settings pointing at that MCC shop. Proposed work (told to the user, not
+started):
+
+1. **Wrong-shop guard.** The extension reports which Depop account is
+   signed in, read from the page header: the `userNavItem-wrapper`
+   testid, probably a `/<username>/` link. Inspect the real header first;
+   don't assume. The server rejects reports whose signed-in username
+   doesn't match the mapped account's `externalAccountId`, and Accounts
+   shows a warning. Optionally the extension auto-selects the MCC shop
+   by username, so settings need no shop choice.
+2. **Stagger the shop-watcher checks** across Depop accounts (today they
+   share one 2-min interval, and Depop 403s back-to-back page loads).
+3. **Accounts page:** one status block per shop (watcher, email,
+   extension tab).
+
+Waiting on the user for: the second shop's username, whether its Depop
+emails go to a different inbox or the same one, and a second Chrome
+profile signed into it with the extension loaded. Do the guard with
+both profiles present, so one extension reload covers it.
