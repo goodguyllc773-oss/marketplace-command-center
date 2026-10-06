@@ -606,7 +606,18 @@ started):
 3. **Accounts page:** one status block per shop (watcher, email,
    extension tab).
 
-Waiting on the user for: the second shop's username, whether its Depop
-emails go to a different inbox or the same one, and a second Chrome
-profile signed into it with the extension loaded. Do the guard with
-both profiles present, so one extension reload covers it.
+**Open questions for the user. Ask these first next session, before
+building:**
+
+1. What is the second Depop shop's **username**? (Or did they already
+   add it under Accounts → Add account → Depop (Live)?)
+2. Do that shop's Depop emails go to a **different inbox or the same
+   one**? If the same, its Email connection needs the "Depop sign-up
+   email" (`matchTo`) filled in so the shops don't mix.
+3. Do they have a **second Chrome profile signed into that Depop shop**,
+   with the MCC Depop Reader extension loaded there (Load unpacked →
+   `extension/depop-reader`, then set the API key and pick that shop)?
+   If not, they set that up first.
+
+Build the wrong-shop guard with both profiles present, so one extension
+reload covers it.
