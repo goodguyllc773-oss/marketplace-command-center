@@ -24,3 +24,6 @@ coverage/
 # Temporary local inspection output (holds personal page data)
 .inspect/
 _inspect*
+
+# Depop Reader extension: MCC address + local API key for zero-setup installs
+extension/**/config.local.js

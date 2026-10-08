@@ -146,6 +146,7 @@ export default function Accounts() {
       </Card>
 
       <Card title="Accounts">
+        <UnknownDepopShops onAdded={invalidate} />
         {accountsQuery.isLoading && <div className="text-slate-400">Loading…</div>}
         {accountsQuery.data && accountsQuery.data.length === 0 && (
           <div className="text-sm text-slate-500">No accounts yet — add one above.</div>
@@ -318,6 +319,45 @@ function EmailControl({ accountId }: { accountId: string }) {
  * extension checks in every minute; background tabs can be throttled). */
 const EXTENSION_LIVE_MS = 3 * 60_000;
 
+/** Depop accounts the Depop Reader extension saw signed in (in any Chrome
+ * profile) that MCC has no shop for yet — one click adds the shop and
+ * starts watching it. */
+function UnknownDepopShops({ onAdded }: { onAdded: () => void }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["unknown-depop-shops"], queryFn: api.accounts.unknownDepopShops, refetchInterval: 30_000 });
+  const add = useMutation({
+    mutationFn: async (username: string) => {
+      const account = await api.accounts.create({ platformKey: "depop-live", externalAccountId: username, label: username });
+      await api.watchdogs.updateConfig(account.id, { intervalMs: 120_000, staleAfterMs: 480_000 });
+      await api.watchdogs.start(account.id);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["unknown-depop-shops"] });
+      onAdded();
+    },
+  });
+  if (!data?.length) return null;
+  return (
+    <div className="mb-3 flex flex-col gap-2">
+      {data.map((s) => (
+        <div key={s.username} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-700/60 bg-amber-950/30 px-4 py-2 text-sm">
+          <span className="text-amber-200">
+            The Depop Reader extension sees <strong>@{s.username}</strong> signed in, but MCC isn't watching that shop yet.
+          </span>
+          <button
+            onClick={() => add.mutate(s.username)}
+            disabled={add.isPending}
+            className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-base-950 hover:bg-accent/90 disabled:opacity-50"
+          >
+            Add @{s.username}
+          </button>
+        </div>
+      ))}
+      {add.isError && <p className="text-xs text-rose-400">{add.error instanceof Error ? add.error.message : "Couldn't add it"}</p>}
+    </div>
+  );
+}
+
 /** Status of the "MCC Depop Reader" Chrome extension for this shop. */
 function DepopExtensionControl({ accountId }: { accountId: string }) {
   const { data: s } = useQuery({
@@ -333,7 +373,7 @@ function DepopExtensionControl({ accountId }: { accountId: string }) {
         <span className="text-emerald-400">
           ● Chrome extension: Depop messages tab open
           <span className="text-slate-500">
-            {" "}
+            {s.signedInAs ? ` · signed in as @${s.signedInAs}` : ""}
             {s.conversations !== undefined && ` · ${s.conversations} conversations`} · last check-in{" "}
             {new Date(s.lastSeenAt).toLocaleTimeString()}
             {s.autoRefresh
@@ -341,6 +381,11 @@ function DepopExtensionControl({ accountId }: { accountId: string }) {
               : " · auto-refresh off"}
           </span>
           {s.refreshProblem && <span className="block text-amber-400">{s.refreshProblem}</span>}
+          {!s.signedInAs && (
+            <span className="block text-amber-400">
+              Couldn't tell which Depop account is signed in — using the shop picked in the extension's settings.
+            </span>
+          )}
         </span>
       ) : (
         <span className="text-slate-500">

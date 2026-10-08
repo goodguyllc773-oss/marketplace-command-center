@@ -26,6 +26,26 @@ const SCAN_TTL_MS = 60_000;
 const PAUSE_BETWEEN_PAGES_MS = 2_500;
 const TITLE_LOOKUPS_PER_CHECK = 5;
 const EMAIL_LOOKBACK_DAYS = 14;
+/** Gap between two shops' checks — Depop 403s back-to-back page loads. */
+const GAP_BETWEEN_SHOPS_MS = 20_000;
+
+// Every Depop shop's check goes through one queue, so with several shops
+// only one browser loads Depop at a time, spaced out.
+let shopQueue: Promise<unknown> = Promise.resolve();
+let lastScanEndedAt = 0;
+function inShopQueue<T>(fn: () => Promise<T>): Promise<T> {
+  const run = shopQueue.then(async () => {
+    const wait = lastScanEndedAt + GAP_BETWEEN_SHOPS_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    try {
+      return await fn();
+    } finally {
+      lastScanEndedAt = Date.now();
+    }
+  });
+  shopQueue = run.catch(() => undefined);
+  return run;
+}
 
 interface ScrapedListing {
   slug: string;
@@ -203,7 +223,7 @@ export class DepopBrowserConnector implements MarketplaceConnector {
   private async getScan(): Promise<Scan> {
     if (this.scan && Date.now() - this.scan.at < SCAN_TTL_MS) return this.scan;
     if (!this.inFlight) {
-      this.inFlight = this.runScan()
+      this.inFlight = inShopQueue(() => this.runScan())
         .then((s) => (this.scan = s))
         .finally(() => (this.inFlight = null));
     }

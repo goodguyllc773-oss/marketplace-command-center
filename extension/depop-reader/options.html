@@ -29,7 +29,7 @@
         <label>MCC server<input id="serverUrl" placeholder="http://127.0.0.1:4000" /></label>
         <label>MCC API key (LOCAL_API_KEY from apps/server/.env)<input id="apiKey" type="password" autocomplete="off" /></label>
         <button id="load" class="secondary">Find my Depop shops</button>
-        <label>Which MCC Depop shop is signed in on this Chrome profile?<select id="accountId"><option value="">— load shops first —</option></select></label>
+        <label>Which MCC Depop shop? (Automatic follows the Depop account signed in on the page — leave it unless that fails.)<select id="accountId"></select></label>
         <label class="row"><input id="autoRefresh" type="checkbox" /> Auto-refresh the Depop conversation list</label>
         <label>Every (minutes, 2–30)<input id="refreshMinutes" type="number" min="2" max="30" /></label>
         <p>Clicks Depop's own "Refresh" button on the list so new messages show up — only on the list, and never while you're using the page.</p>
@@ -55,6 +55,8 @@
         <p>It never opens conversations (that would mark them read), types, or sends anything on Depop, and never reads cookies or passwords. The only clicks it ever makes are the optional Refresh and Offers/Chat tabs above. It only talks to MCC on this PC.</p>
       </div>
     </main>
+    <!-- Optional (gitignored); when it's missing the page just uses the fields above. -->
+    <script src="config.local.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

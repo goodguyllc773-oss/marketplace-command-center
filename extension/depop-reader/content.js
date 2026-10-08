@@ -67,8 +67,76 @@
   const onMessagesPage = () => location.pathname.startsWith("/messages");
   const onListPage = () => /^\/messages\/?$/.test(location.pathname);
 
+  // Which Depop account is signed in, from the page header — so each tab
+  // reports for the right MCC shop, whichever Chrome profile it's in.
+  const RESERVED = new Set([
+    "messages", "products", "sell", "search", "explore", "login", "signup", "likes", "settings", "help",
+    "sellinghub", "category", "brands", "bag", "cart", "notifications", "receipts", "feed", "discover",
+    "men", "women", "kids", "everything", "about", "blog", "privacy", "terms", "sizes",
+  ]);
+  const navRoots = () =>
+    [document.querySelector('[data-testid="userNavItem-wrapper"]'), document.querySelector('[data-testid="header"]'), document.querySelector("header")].filter(Boolean);
+  let account = null;
+  function detectAccount() {
+    const [nav] = navRoots();
+    // 1. a profile link in the user menu: /<username>/
+    if (nav) {
+      for (const a of nav.querySelectorAll("a[href]")) {
+        const m = pathOf(a.getAttribute("href")).match(/^\/([a-z0-9._-]{2,30})\/?$/i);
+        if (m && !RESERVED.has(m[1].toLowerCase())) return { username: m[1].toLowerCase(), via: "user menu link" };
+      }
+      // 2. the avatar's alt text / label
+      const label = [nav, ...nav.querySelectorAll("img, [aria-label]")]
+        .map((e) => (e.getAttribute("alt") || e.getAttribute("aria-label") || "").trim())
+        .find((t) => /^@?[a-z0-9._-]{2,30}$/i.test(t) && !RESERVED.has(t.toLowerCase()));
+      if (label) return { username: label.replace(/^@/, "").toLowerCase(), via: "avatar label" };
+    }
+    // 3. a header link labelled as the profile
+    for (const root of navRoots()) {
+      for (const a of root.querySelectorAll("a[href]")) {
+        const m = pathOf(a.getAttribute("href")).match(/^\/([a-z0-9._-]{2,30})\/?$/i);
+        const text = `${a.getAttribute("aria-label") || ""} ${a.innerText || ""}`;
+        if (m && !RESERVED.has(m[1].toLowerCase()) && /profile|shop|account/i.test(text)) {
+          return { username: m[1].toLowerCase(), via: "profile link" };
+        }
+      }
+    }
+    return null;
+  }
+  function headerDiag() {
+    return navRoots()
+      .flatMap((root) => [root, ...root.querySelectorAll("a, button, img, [aria-label], [data-testid]")])
+      .slice(0, 40)
+      .map((e) =>
+        [
+          e.tagName.toLowerCase(),
+          e.getAttribute("data-testid") && `testid=${e.getAttribute("data-testid")}`,
+          e.getAttribute("href") && `href=${pathOf(e.getAttribute("href"))}`,
+          e.getAttribute("aria-label") && `aria=${clip(e.getAttribute("aria-label"), 40)}`,
+          e.getAttribute("alt") && `alt=${clip(e.getAttribute("alt"), 40)}`,
+          e.children.length === 0 && e.innerText && `text=${clip(e.innerText, 30)}`,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+  }
+  const refreshAccount = () => {
+    account = detectAccount() || account;
+  };
+
+  // Clicks (Refresh / Offers) are done by one lead tab per signed-in shop.
+  const askLead = async () => {
+    try {
+      const r = await chrome.runtime.sendMessage({ type: "mcc-depop-lead?", signedInAs: account?.username || "unknown" });
+      return r?.lead !== false;
+    } catch {
+      return false;
+    }
+  };
+
   const send = (kind, snapshot) => {
     if (!alive()) return shutDown();
+    refreshAccount();
     try {
       chrome.runtime.sendMessage({
         type: "mcc-depop",
@@ -83,6 +151,11 @@
           refreshProblem: refreshProblem || undefined,
           offersCheck: settings.offersCheck,
           offersMinutes: settings.offersMinutes,
+          signedInAs: account?.username,
+          signedInVia: account?.via,
+          // Only while the account couldn't be found — what the header
+          // holds, so the detection can be fixed.
+          headerDiag: account ? undefined : headerDiag(),
         },
         snapshot,
       });
@@ -394,8 +467,10 @@
   const observer = new MutationObserver(schedule);
   observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
   const heartbeat = setInterval(() => onMessagesPage() && send("heartbeat"), HEARTBEAT_MS);
-  const ticker = setInterval(() => {
+  const ticker = setInterval(async () => {
     if (!alive()) return shutDown();
+    refreshAccount();
+    if (!(await askLead())) return;
     if (!maybeVisitOffers()) maybeRefresh();
   }, TICK_MS);
 

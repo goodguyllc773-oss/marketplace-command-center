@@ -51,6 +51,11 @@ export interface ExtensionStatus {
   /** First Offers tab stored (no offer alerts before it) / latest read. */
   offersBaselineAt?: string;
   lastOffersAt?: string;
+  /** The Depop account the extension saw signed in (and how), or — when
+   * it couldn't tell — a short description of the page header. */
+  signedInAs?: string;
+  signedInVia?: string;
+  headerDiag?: string[];
 }
 
 const PLATFORM_ID = "depop-live";
@@ -86,6 +91,9 @@ export interface ExtensionReport {
     refreshProblem?: string;
     offersCheck?: boolean;
     offersMinutes?: number;
+    signedInAs?: string;
+    signedInVia?: string;
+    headerDiag?: string[];
   };
   snapshot?: unknown;
 }
@@ -107,6 +115,9 @@ export function handleExtensionReport(accountId: string, report: ExtensionReport
       refreshProblem: report.page.refreshProblem,
       offersCheck: report.page.offersCheck,
       offersMinutes: report.page.offersMinutes,
+      signedInAs: report.page.signedInAs,
+      signedInVia: report.page.signedInVia,
+      headerDiag: report.page.headerDiag,
     };
     await saveExtensionStatus(accountId, status);
     if (report.kind !== "snapshot" || !report.snapshot) return null;

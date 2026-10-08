@@ -7,6 +7,7 @@
     "packages/*"
   ],
   "scripts": {
+    "setup": "node scripts/setup-local.mjs",
     "dev": "concurrently -n server,web -c blue,green \"npm run dev --workspace=apps/server\" \"npm run dev --workspace=apps/web\"",
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/connectors && npm run build --workspace=apps/server && npm run build --workspace=apps/web",
     "test": "npm run test --workspaces --if-present",

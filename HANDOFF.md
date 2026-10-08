@@ -22,8 +22,16 @@ multiple Depop accounts** (see "What's next" at the bottom). Today:_
 
 ## Current state
 
-- **Branch:** `master` (the only branch). Last commit: today's work (see
-  `git log -1`), on top of `44d38a0`. **No git remote**, so commit only.
+- **Branch:** `master` (the only branch). See `git log -1`.
+  - **Remote (since 2026-10-08):** private GitHub repo
+    `goodguyllc773-oss/marketplace-command-center`, worked on from the
+    Windows PC and the MacBook.
+  - `git pull` first, push after committing.
+  - **Run MCC on one machine at a time** (the user's choice). Each machine
+    has its own DB, logins, and `.env`; set a new one up with
+    `npm install && npm run setup` (see CLAUDE.md, "Two machines").
+  - Everything below describes the **Windows PC's** running instance.
+  - The Mac hasn't been set up yet.
 - **Dev servers:** started with `explorer.exe
   "C:\Users\xalex\marketplace-command-center\start-dev.cmd"`, which opens
   a console window in the user's session. API on 127.0.0.1:4000, web on
@@ -39,7 +47,12 @@ multiple Depop accounts** (see "What's next" at the bottom). Today:_
       (`cmuvm9dgt006bed7chlyhlcpw`). Its email is connected, and the
       Depop Reader extension is mapped to it. In the DB: 11 Inbox
       conversations, 9 offers (all buying-side).
-  - Both watchdogs are RUNNING, every 120 s, stale after 480 s.
+    - Depop (Live) / thismysize, username `thismysize`
+      (`cmuzx7pmd0003s491yz4is55s`), added 2026-10-08. Its first check
+      found 24 listings. Its email (a different inbox) and its Chrome
+      profile + extension are **not connected yet**; that's the user's
+      next step.
+  - All three watchdogs are RUNNING, every 120 s, stale after 480 s.
   - The 24 NotificationSetting rows are the user's Discord preferences.
     `LISTING_REMOVED` was switched ON today, at the user's request for
     takedown alerts.
@@ -584,40 +597,59 @@ E2EE and render behind the "Enter your PIN to restore your chats" dialog
    the same buying-side counter offer or acceptance (no shared id to
    dedupe on).
 
-## What's next — multiple Depop accounts (the user asked, 2026-10-05)
+## Multiple Depop accounts: built 2026-10-08, needs live checking
 
-Already per-account: the shop watcher, email (with `matchTo` for shared
-inboxes), and everything the extension feeds (status, Inbox, Offers,
-alerts, the offline alert). The real limit is that **one Chrome profile
-= one Depop login**. Each extra shop needs its own Chrome profile, signed
-into that Depop account, with the extension loaded there too and its
-settings pointing at that MCC shop. Proposed work (told to the user, not
-started):
+The user's answers: the second shop is **@thismysize**, its Depop emails
+go to a **different inbox**, and they had no second Chrome profile. They
+wanted "another tab" to work. It can't: one Chrome profile = one Depop
+login, and signing in in a new tab signs the other shop out. So each shop
+gets its own Chrome profile, made as close to zero-setup as possible.
 
-1. **Wrong-shop guard.** The extension reports which Depop account is
-   signed in, read from the page header: the `userNavItem-wrapper`
-   testid, probably a `/<username>/` link. Inspect the real header first;
-   don't assume. The server rejects reports whose signed-in username
-   doesn't match the mapped account's `externalAccountId`, and Accounts
-   shows a warning. Optionally the extension auto-selects the MCC shop
-   by username, so settings need no shop choice.
-2. **Stagger the shop-watcher checks** across Depop accounts (today they
-   share one 2-min interval, and Depop 403s back-to-back page loads).
-3. **Accounts page:** one status block per shop (watcher, email,
-   extension tab).
+- **Extension 0.5.0:**
+  - **Zero-setup:** `config.local.js` (gitignored, written by
+    `npm run setup`) gives MCC's address and key. Loading the extension
+    into another Chrome profile needs no settings.
+  - **Detection:** `content.js` `detectAccount()` finds the signed-in
+    Depop username from the header. It tries, in order: a `/<user>/`
+    link inside `[data-testid=userNavItem-wrapper]`; the avatar's
+    alt/aria label; a header link labelled profile/shop/account. Reports
+    carry `page.signedInAs` / `signedInVia`.
+  - **When detection fails:** reports carry `page.headerDiag` (≤40
+    header elements: tag, testid, href, aria, alt, short text).
+  - **UNVERIFIED:** Claude in Chrome wasn't connected, so the real
+    header was never inspected. Check `signedInAs` / `headerDiag` in
+    `GET /api/accounts/<id>/extension-status` and fix `detectAccount`
+    from that.
+  - **One lead tab per shop:** the background worker keeps tab ids per
+    signed-in shop, and only the lowest live tab id clicks
+    (Refresh/Offers). The content script asks `mcc-depop-lead?` each tick.
+  - **Settings:** the shop choice is optional ("Automatic"); a stored
+    `accountId` is only a fallback.
+- **Server:** the report resolves the shop by `signedInAs` against
+  depop-live `externalAccountId` (case-insensitive). The signed-in
+  account wins over the settings choice, which is the wrong-shop guard.
+  An unknown username is stored in AppSetting `depopReaderUnknownShops`,
+  returns 404 with a message, and shows on Accounts as "Add @user". That
+  creates the account, sets 2 min / 8 min, and starts its watchdog.
+- **Shop watcher:** all Depop shop scans share one module-level queue in
+  `depopBrowserConnector.ts`, with a 20 s gap between shops.
+- **Accounts page:** each shop's extension line shows "signed in as @x",
+  or a warning when the account couldn't be detected.
 
-**Open questions for the user. Ask these first next session, before
-building:**
+**The user's pending steps:**
 
-1. What is the second Depop shop's **username**? (Or did they already
-   add it under Accounts → Add account → Depop (Live)?)
-2. Do that shop's Depop emails go to a **different inbox or the same
-   one**? If the same, its Email connection needs the "Depop sign-up
-   email" (`matchTo`) filled in so the shops don't mix.
-3. Do they have a **second Chrome profile signed into that Depop shop**,
-   with the MCC Depop Reader extension loaded there (Load unpacked →
-   `extension/depop-reader`, then set the API key and pick that shop)?
-   If not, they set that up first.
+1. Reload the extension (0.5.0) in the current Chrome.
+2. Create a Chrome profile for @thismysize, load the extension there,
+   and sign into depop.com/messages.
+3. Connect @thismysize's email on Accounts.
 
-Build the wrong-shop guard with both profiles present, so one extension
-reload covers it.
+Then verify `signedInAs` for both shops.
+
+## What's next
+
+1. **Finish multiple Depop accounts:** do the user's pending steps
+   above, then verify `signedInAs` for each shop. If it's missing, fix
+   `detectAccount` from `headerDiag`.
+2. **Set up the MacBook** when the user wants it: clone, `npm install`,
+   `npm run setup`, then reconnect accounts in the app. Run MCC on only
+   one machine at a time.

@@ -401,6 +401,9 @@ export interface ExtensionStatus {
   refreshMinutes?: number;
   lastRefreshAt?: string;
   refreshProblem?: string;
+  signedInAs?: string;
+  signedInVia?: string;
+  headerDiag?: string[];
 }
 
 export const api = {
@@ -423,6 +426,7 @@ export const api = {
         `/api/accounts/${id}/login-status`,
       ),
     extensionStatus: (id: string) => request<ExtensionStatus | null>(`/api/accounts/${id}/extension-status`),
+    unknownDepopShops: () => request<{ username: string; lastSeenAt: string }[]>("/api/extension/depop/unknown-shops"),
   },
 
   watchdogs: {
