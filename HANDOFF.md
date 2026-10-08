@@ -4,13 +4,31 @@ Read this first, every time, before touching anything else. Update it
 before you stop and immediately before any context compaction (see
 CLAUDE.md for the exact rule).
 
-_Last updated 2026-10-08 (Windows PC). **Where we left off:** everything
-is committed and pushed. MCC is **running on the Windows PC**. Facebook
-and Depop are both monitored for real. Depop messages and offers come
-through the **MCC Depop Reader** Chrome extension. Multiple Depop shops
-are built (second shop @thismysize) but wait on the user's steps (see
-"Multiple Depop accounts"). The user plans to **switch MCC to the
-MacBook**: follow "Switching machines" below exactly. Background:_
+_Last updated 2026-10-08 (Windows PC), end of session. **Where we left
+off:**_
+
+- _Everything is committed and pushed to the private GitHub repo. Every
+  Claude session now auto-syncs with GitHub at start (SessionStart
+  hook), and closeouts always commit and push; see CLAUDE.md, "Two
+  machines"._
+- _MCC is **running on the Windows PC**. Facebook and Depop are both
+  monitored for real; Depop messages and offers come through the **MCC
+  Depop Reader** Chrome extension._
+- _Multiple Depop shops are built (second shop @thismysize) but wait on
+  the user's steps (see "Multiple Depop accounts")._
+- _The user plans to **switch MCC to the MacBook** (not set up yet):
+  follow "Switching machines" below exactly._
+
+_**Next session:**_
+
+1. _Act on the "[MCC repo sync]" report first._
+2. _Ask whether the user did the @thismysize steps (extension 0.5.0
+   reload, second Chrome profile, email). If so, verify `signedInAs` for
+   both shops (`GET /api/accounts/<id>/extension-status`) and fix
+   `detectAccount` from `headerDiag` if needed._
+3. _Or help with the Mac switch if that's what they're doing._
+
+_Background:_
 - _The Facebook watchdog works for real (listings, takedowns, messages,
   full conversation hydration), with Discord alerts._
 - _Depop: public shop watcher + per-account email + the Depop Reader
