@@ -9,11 +9,13 @@
 //   apps/web/.env                            matching VITE_API_KEY
 //   extension/depop-reader/config.local.js   so the Chrome extension needs no settings
 // Then: database migrations, Prisma client, Playwright's Chromium, the
-// shared/connector builds, and the platform list.
+// shared/connector builds, the platform list, and the Claude Code
+// SessionStart hook that keeps this machine synced with GitHub.
 
 import { execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -72,5 +74,43 @@ run("npm run build --workspace=packages/shared");
 run("npm run build --workspace=packages/connectors");
 // Platform rows (Depop (Live), Facebook (Live)) — upserts only, no sample data.
 run("npm run db:seed --workspace=apps/server");
+
+// 5. Claude Code sync hook — every Claude session on this machine starts by
+// syncing MCC with GitHub (scripts/sync-check.mjs), so work from the other
+// machine is never missing. Merged into the user's Claude settings; set
+// MCC_NO_SYNC_HOOK=1 to skip.
+if (process.env.MCC_NO_SYNC_HOOK !== "1") installSyncHook();
+
+function installSyncHook() {
+  const dir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  const file = join(dir, "settings.json");
+  const command = `node "${join(root, "scripts", "sync-check.mjs").replace(/\\/g, "/")}"`;
+  let settings = {};
+  if (existsSync(file)) {
+    try {
+      settings = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      say(`couldn't read ${file} (not valid JSON) — left it alone; add the sync hook by hand (see CLAUDE.md)`);
+      return;
+    }
+  }
+  settings.hooks ??= {};
+  settings.hooks.SessionStart ??= [];
+  const existing = settings.hooks.SessionStart.flatMap((g) => g.hooks ?? []).find((h) => String(h.command ?? "").includes("sync-check.mjs"));
+  if (existing?.command === command) {
+    say("Claude sync hook already installed");
+    return;
+  }
+  if (existing) existing.command = command; // repo moved — point at this copy
+  else {
+    settings.hooks.SessionStart.push({
+      matcher: "startup|resume",
+      hooks: [{ type: "command", command, timeout: 45, statusMessage: "Syncing Marketplace Command Center with GitHub…" }],
+    });
+  }
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+  say(`installed the Claude sync hook in ${file} (each Claude session starts by syncing MCC with GitHub)`);
+}
 
 say("done. Start MCC with start-dev.cmd (Windows) or start-dev.command (Mac), or `npm run dev`.");

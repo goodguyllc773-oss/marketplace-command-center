@@ -13,10 +13,27 @@ Before doing anything else, read, in this order:
 
 The code lives on GitHub (**private** repo
 `goodguyllc773-oss/marketplace-command-center`) and is worked on from both
-machines:
+machines. **The user's rule: work from either machine must always reach
+the other, and every session must start on the latest version. No
+progress gets lost.**
 
-1. `git pull` before starting work, on whichever machine.
-2. Commit, then `git push` when done (only when the user asks to commit).
+1. **Session start is automatic.** A Claude Code SessionStart hook runs
+   `scripts/sync-check.mjs`. `npm run setup` installs it in the user's
+   Claude settings on each machine; on the Windows PC it's in
+   `C:\Users\xalex\.claude\settings.json`. Its report shows up as
+   "[MCC repo sync …]" context.
+   - It auto-pulls when this machine is behind and has nothing pending.
+   - It auto-pushes commits that never reached GitHub.
+   - It changes nothing when there are uncommitted edits or both machines
+     have new commits. **When it reports any of these, sort that out with
+     the user FIRST, before any other work.**
+   - If no "[MCC repo sync]" line appeared (the hook isn't installed, or
+     the session started elsewhere), run `npm run sync` in the repo
+     before touching anything.
+2. **Session end: commit AND push.** When the user closes out ("save",
+   "commit", "closeout", "done"), commit everything and `git push`, so
+   the other machine pulls it next session. Never end a session with
+   work only on this machine.
 3. **Run MCC (the watchdogs) on only ONE machine at a time.** Two running
    at once would send every Discord alert twice and double the page loads
    on Depop, which 403s busy clients. Before starting the dev servers,
@@ -106,4 +123,5 @@ with everything else, then push, so the other machine gets it.
 - Verify features live in the browser, not just by typechecking.
 - Secrets (`.env`, webhook URLs, `.browser-profiles/`, `*.db`) are never
   committed.
-- Only commit when the user asks.
+- Only commit when the user asks. When they close out, always commit AND
+  push (see "Two machines").

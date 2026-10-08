@@ -29,6 +29,23 @@ loads on Depop, which 403s busy clients. **As of 2026-10-08 MCC runs on the
 Windows PC and the Mac has never been set up.** Update that sentence after
 every switch.
 
+**Two kinds of "work" travel differently:**
+
+- **Code** (anything committed: features, fixes, HANDOFF, the extension)
+  syncs through GitHub automatically.
+  - Each Claude session starts with the sync hook
+    (`scripts/sync-check.mjs`), which pulls the other machine's commits
+    and pushes this machine's unpushed ones.
+  - Each closeout commits and pushes.
+  - The user's requirement: nothing is ever stranded on one machine. See
+    CLAUDE.md, "Two machines".
+- **MCC's data** (accounts, conversations, offers, connected emails,
+  Discord webhooks, all in `apps/server/prisma/dev.db`) is NOT in git.
+  - It moves only by copying the DB and `.env` in the steps below, in
+    whichever direction you're switching.
+  - Copy it back when returning to the other machine, or that machine
+    resumes with its older data.
+
 ### A. On the machine you're switching AWAY from
 
 1. Commit and push any code changes (`git status` should be clean, and
@@ -72,7 +89,10 @@ every switch.
    the carried key.
 3. **`npm run setup`.** It is safe to re-run: it creates only missing
    files, applies any new migrations, installs Chromium, builds, and seeds
-   platforms.
+   platforms. It also **installs the Claude sync hook** in that machine's
+   Claude settings (`~/.claude/settings.json`), so from then on every
+   Claude session there starts synced. Check the next session shows a
+   "[MCC repo sync …]" line.
 4. **Start MCC:** Mac `open start-dev.command`; Windows `explorer.exe
    "…\start-dev.cmd"`. Run it outside Claude's sandbox; see CLAUDE.md.
    Check :4000/api/health and :5173.
