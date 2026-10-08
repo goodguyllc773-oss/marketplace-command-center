@@ -4,12 +4,13 @@ Read this first, every time, before touching anything else. Update it
 before you stop and immediately before any context compaction (see
 CLAUDE.md for the exact rule).
 
-_Last updated 2026-10-05 (Windows box), end of session. **Where we left
-off:** everything is committed. Facebook and Depop are both monitored for
-real. Depop messages and offers come through the **MCC Depop Reader**
-Chrome extension, which is running in the user's Chrome right now
-(v0.4.1, auto-refresh every 3 min, Offers check every 5 min). **Next job:
-multiple Depop accounts** (see "What's next" at the bottom). Today:_
+_Last updated 2026-10-08 (Windows PC). **Where we left off:** everything
+is committed and pushed. MCC is **running on the Windows PC**. Facebook
+and Depop are both monitored for real. Depop messages and offers come
+through the **MCC Depop Reader** Chrome extension. Multiple Depop shops
+are built (second shop @thismysize) but wait on the user's steps (see
+"Multiple Depop accounts"). The user plans to **switch MCC to the
+MacBook**: follow "Switching machines" below exactly. Background:_
 - _The Facebook watchdog works for real (listings, takedowns, messages,
   full conversation hydration), with Discord alerts._
 - _Depop: public shop watcher + per-account email + the Depop Reader
@@ -20,6 +21,87 @@ multiple Depop accounts** (see "What's next" at the bottom). Today:_
 - _Removed all sample data and made mock platforms opt-in. Added
   CLAUDE.md + this file._
 
+## Switching machines (Windows PC ⇄ MacBook): the runbook
+
+The user's rule: **code on both machines, MCC running on only ONE at a
+time.** Two at once would double every Discord alert and double the page
+loads on Depop, which 403s busy clients. **As of 2026-10-08 MCC runs on the
+Windows PC and the Mac has never been set up.** Update that sentence after
+every switch.
+
+### A. On the machine you're switching AWAY from
+
+1. Commit and push any code changes (`git status` should be clean, and
+   `git log origin/master -1` should match `git log -1`).
+2. **Stop MCC:** close the dev-server window (Windows: the "Marketplace
+   Command Center - dev servers" console; Mac: the Terminal window from
+   `start-dev.command`), or press Ctrl+C in it. Confirm
+   `http://127.0.0.1:4000/api/health` no longer answers.
+3. **Turn off the Depop Reader extension in that machine's Chrome**
+   (`chrome://extensions` → toggle off, in every profile that has it).
+   Otherwise it keeps clicking Refresh/Offers on Depop with nothing
+   listening.
+4. **To carry the data over (recommended):** with MCC stopped, copy these
+   two files to the other machine **by AirDrop, USB, or iCloud Drive,
+   NEVER git**:
+   - `apps/server/prisma/dev.db`, the database. It holds every account,
+     conversation, offer, connected email (encrypted), Discord webhook
+     and notification setting.
+   - `apps/server/.env`. Its `LOCAL_API_KEY` is the key the email
+     passwords are encrypted with, so **the DB and this .env must travel
+     together.**
+
+   Skip this step only if the user wants the other machine to start
+   empty.
+
+### B. On the machine you're switching TO
+
+1. **First time only:**
+   - Install Node.js 20+.
+   - `git clone https://github.com/goodguyllc773-oss/marketplace-command-center.git`
+     (a private repo; GitHub sign-in as goodguyllc773-oss).
+   - `cd marketplace-command-center && npm install`.
+   - Every later time: `git pull`, then `npm install` if
+     `package-lock.json` changed.
+2. **If carrying data over:** put the copied `.env` at `apps/server/.env`
+   and `dev.db` at `apps/server/prisma/dev.db`, replacing what's there.
+   Do this BEFORE `npm run setup`, so setup reuses that key for
+   `apps/web/.env` and the extension config. On a machine that already
+   has `apps/web/.env` or `extension/depop-reader/config.local.js` from an
+   earlier setup, delete those two first, so they're regenerated with
+   the carried key.
+3. **`npm run setup`.** It is safe to re-run: it creates only missing
+   files, applies any new migrations, installs Chromium, builds, and seeds
+   platforms.
+4. **Start MCC:** Mac `open start-dev.command`; Windows `explorer.exe
+   "…\start-dev.cmd"`. Run it outside Claude's sandbox; see CLAUDE.md.
+   Check :4000/api/health and :5173.
+5. **Redo what can't be copied (browser logins never move between
+   computers):**
+   - **Facebook (Live) / Personal:** Accounts → "Log in again", and the
+     user signs in in the window that opens. Then check that the
+     Facebook watchdog syncs with no error.
+   - **Depop Reader extension in this machine's Chrome:**
+     `chrome://extensions` → Developer mode → Load unpacked →
+     `<repo>/extension/depop-reader`. Then open `depop.com/messages`
+     signed into **@dsgnr_ex**. For **@thismysize**, use a separate
+     Chrome profile with the extension loaded there too, signed into that
+     shop. No extension settings are needed (config.local.js comes from
+     setup).
+   - Check Accounts: each Depop shop shows "● Chrome extension: Depop
+     messages tab open · signed in as @…".
+6. **Watchdogs:** with the carried DB they resume by themselves (all
+   three: every 120 s, stale after 480 s). On a fresh DB, add the accounts
+   (Facebook (Live) "Personal"; Depop (Live) `dsgnr_ex` labelled
+   "Reselling"; Depop (Live) `thismysize`). Reconnect each Depop shop's
+   email (the user has the App Passwords; the two shops use different
+   inboxes). Re-enter the Discord webhooks under Settings. Set Depop
+   watchdogs to 2 min.
+7. **Send one Discord test** (Settings → Test) to confirm alerts arrive
+   from the new machine.
+8. Update this section's "As of" sentence (which machine runs MCC now),
+   then commit and push.
+
 ## Current state
 
 - **Branch:** `master` (the only branch). See `git log -1`.
@@ -27,9 +109,8 @@ multiple Depop accounts** (see "What's next" at the bottom). Today:_
     `goodguyllc773-oss/marketplace-command-center`, worked on from the
     Windows PC and the MacBook.
   - `git pull` first, push after committing.
-  - **Run MCC on one machine at a time** (the user's choice). Each machine
-    has its own DB, logins, and `.env`; set a new one up with
-    `npm install && npm run setup` (see CLAUDE.md, "Two machines").
+  - **Run MCC on one machine at a time** (the user's choice). See
+    "Switching machines" above.
   - Everything below describes the **Windows PC's** running instance.
   - The Mac hasn't been set up yet.
 - **Dev servers:** started with `explorer.exe

@@ -25,8 +25,11 @@ machines:
 Git carries only the code. **Per machine, never in git:** `apps/server/.env`,
 `apps/web/.env`, the SQLite database (accounts, messages, offers, Discord
 webhooks and connected emails all live in it), `.browser-profiles/`
-(Facebook logins), and `extension/depop-reader/config.local.js`. A new
-machine starts empty:
+(Facebook logins), and `extension/depop-reader/config.local.js`.
+**Switching which machine runs MCC: follow HANDOFF.md → "Switching
+machines" step by step.** It carries the database over, together with
+`apps/server/.env` (the email passwords are encrypted with its key), by
+AirDrop/USB, never git. Otherwise a new machine starts empty:
 
 - `npm install`, then `npm run setup` (`scripts/setup-local.mjs`). It
   creates the `.env` files with a fresh `LOCAL_API_KEY` and the
