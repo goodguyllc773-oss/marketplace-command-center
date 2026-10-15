@@ -19,6 +19,85 @@ off:**_
 - _The user plans to **switch MCC to the MacBook** (not set up yet):
   follow "Switching machines" below exactly._
 
+_**2026-10-14 (Windows PC):** started MCC. Fixed two bugs that had left
+the Facebook watchdog dead since Oct 9:_
+
+1. _**Race in `connectorManager.getConnector`.** Concurrent callers (the
+   resumed watchdog plus the Accounts page's login-status poll) each built
+   a FacebookBrowserConnector on the same headless page, giving
+   "Navigation … interrupted by another navigation". It now caches the
+   in-flight promise (`pendingConnectors`)._
+2. _**Startup resumed only RUNNING/STALE watchdogs, not ERROR ones**,
+   so one failed sync stopped Facebook for good. It now resumes ERROR
+   too. Only STOPPED (the user's choice) stays stopped._
+
+_Verified: after a server reload all three resumed and synced (FB
+00:30:20Z, @dsgnr_ex 00:30:33Z, @thismysize 00:30:52Z, the Depop shops
+19 s apart via the shared queue). The FB session was still valid._
+
+_**Later on 2026-10-14:**_
+
+- _**Header detection fixed (extension 0.5.1).** The real header has no
+  profile link; the user menu is a button. The signed-in username is in
+  the **Likes link `/<user>/likes/`**, now the first rule in
+  `detectAccount` ("likes link"). Matched against the real header
+  diagnostics: @dsgnr_ex._
+- _**Keep-awake (0.6.0, the user's request: "run in the background even
+  if the computer goes to sleep").** A sleeping computer can't run
+  anything, so instead the extension keeps it awake. The background
+  worker calls `chrome.power.requestKeepAwake("system")` while any
+  `depop.com/messages*` tab is open. The screen may still sleep;
+  releasing happens when the last tab closes or the setting is off.
+  It's re-checked on every report and on tab removal/URL change._
+  - _Settings checkbox "Keep this computer awake…", default on. Reports
+    carry `keepingAwake`, shown on Accounts._
+  - _A closed laptop lid or a manual Sleep still sleeps the machine;
+    the user was told._
+- _**Multi-account model (the user wanted many accounts as tabs in ONE
+  Chrome window).** Not possible: one Chrome profile = one Depop login,
+  and every tab shares it. Juggling Depop cookies between tabs was
+  refused (session-data handling, and the kind of trickery Depop bans
+  accounts for). So it's **one Chrome profile (window) per account**, all
+  minimizable; each extension copy recognises its own account._
+- _"Start it up" = start the servers AND open MCC on screen (built-in
+  browser pane, http://localhost:5173)._
+
+_Still outstanding on the user's side:_
+
+- _The Depop Reader extension hasn't reported for about 9 days (the tab
+  is closed or Chrome restarted)._
+- _Extension 0.5.0 has never run (no `signedInAs` yet)._
+- _@thismysize's email isn't connected._
+
+_**The user's pending steps (as of the 2026-10-14 closeout). Ask about
+these first:**_
+
+1. _Reload the extension in their normal Chrome (`chrome://extensions` →
+   ↻ MCC Depop Reader → **0.6.0**). Then verify on Accounts / extension
+   status that @dsgnr_ex shows `signedInAs` "dsgnr_ex" (via "likes link")
+   and `keepingAwake: true`._
+2. _Create the **thismysize** Chrome profile (profile picture → Add →
+   Continue without an account). In that window: Developer mode → Load
+   unpacked → `extension/depop-reader`. Sign into depop.com/messages as
+   @thismysize, then minimize the window. Verify `signedInAs`
+   "thismysize"._
+3. _Connect @thismysize's email (a different inbox from @dsgnr_ex) on
+   Accounts → Connect email (Gmail App Password)._
+4. _Optional, if the PC is a laptop that gets closed: Control Panel →
+   Power Options → "Choose what closing the lid does" → "Do nothing"
+   (plugged in)._
+
+_**Two limits that can't be got around right now (told to the user):**_
+
+1. _**One Chrome window (profile) per Depop account, not one tab per
+   account.** All tabs in a Chrome profile share one Depop login.
+   Juggling login cookies between tabs was refused. The windows can all
+   be minimized and keep running._
+2. _**A sleeping computer can't monitor.** The extension keeps the
+   computer from sleeping by itself while Depop tabs are open, but
+   closing a laptop lid or choosing Sleep manually still sleeps it. It
+   stops only when the tabs are closed or the computer is off/asleep._
+
 _**Next session:**_
 
 1. _Act on the "[MCC repo sync]" report first._

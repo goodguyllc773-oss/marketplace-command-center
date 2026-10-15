@@ -379,6 +379,7 @@ function DepopExtensionControl({ accountId }: { accountId: string }) {
             {s.autoRefresh
               ? ` · auto-refresh every ${s.refreshMinutes ?? 3} min${s.lastRefreshAt ? `, last ${new Date(s.lastRefreshAt).toLocaleTimeString()}` : ""}`
               : " · auto-refresh off"}
+            {s.keepingAwake && " · keeping this computer awake"}
           </span>
           {s.refreshProblem && <span className="block text-amber-400">{s.refreshProblem}</span>}
           {!s.signedInAs && (

@@ -32,6 +32,7 @@ const ReportSchema = z.object({
     signedInAs: z.string().max(60).optional(),
     signedInVia: z.string().max(60).optional(),
     headerDiag: z.array(z.string().max(300)).max(60).optional(),
+    keepingAwake: z.boolean().optional(),
   }),
   snapshot: z.unknown().optional(),
 });

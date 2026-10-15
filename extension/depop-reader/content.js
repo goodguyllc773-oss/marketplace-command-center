@@ -78,6 +78,15 @@
     [document.querySelector('[data-testid="userNavItem-wrapper"]'), document.querySelector('[data-testid="header"]'), document.querySelector("header")].filter(Boolean);
   let account = null;
   function detectAccount() {
+    // 0. VERIFIED on the real header (2026-10-14): the "Likes" link is
+    //    /<signed-in username>/likes/ — the user menu itself is a button
+    //    with no profile link.
+    for (const root of navRoots()) {
+      for (const a of root.querySelectorAll("a[href]")) {
+        const m = pathOf(a.getAttribute("href")).match(/^\/([a-z0-9._-]{2,30})\/likes\/?$/i);
+        if (m && !RESERVED.has(m[1].toLowerCase())) return { username: m[1].toLowerCase(), via: "likes link" };
+      }
+    }
     const [nav] = navRoots();
     // 1. a profile link in the user menu: /<username>/
     if (nav) {

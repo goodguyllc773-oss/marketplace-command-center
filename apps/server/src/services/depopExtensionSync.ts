@@ -56,6 +56,8 @@ export interface ExtensionStatus {
   signedInAs?: string;
   signedInVia?: string;
   headerDiag?: string[];
+  /** The extension is keeping this computer awake (chrome.power). */
+  keepingAwake?: boolean;
 }
 
 const PLATFORM_ID = "depop-live";
@@ -94,6 +96,7 @@ export interface ExtensionReport {
     signedInAs?: string;
     signedInVia?: string;
     headerDiag?: string[];
+    keepingAwake?: boolean;
   };
   snapshot?: unknown;
 }
@@ -118,6 +121,7 @@ export function handleExtensionReport(accountId: string, report: ExtensionReport
       signedInAs: report.page.signedInAs,
       signedInVia: report.page.signedInVia,
       headerDiag: report.page.headerDiag,
+      keepingAwake: report.page.keepingAwake,
     };
     await saveExtensionStatus(accountId, status);
     if (report.kind !== "snapshot" || !report.snapshot) return null;

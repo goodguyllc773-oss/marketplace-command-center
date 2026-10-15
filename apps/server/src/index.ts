@@ -57,10 +57,12 @@ app
   .listen({ port: env.PORT, host: env.HOST })
   .then(async () => {
     app.log.info(`Marketplace Command Center API listening on http://${env.HOST}:${env.PORT}`);
-    // In-memory watchdog timers don't survive a restart — resume any that
-    // the DB still marks RUNNING/STALE so monitoring doesn't silently stop.
+    // In-memory watchdog timers don't survive a restart — resume every one
+    // the user didn't stop, so monitoring doesn't silently stop. ERROR is
+    // included: a watchdog that hit an error was still meant to be running
+    // (left out, the Facebook watchdog sat dead for days after one error).
     const toResume = await prisma.watchdog.findMany({
-      where: { state: { in: ["RUNNING", "STALE"] } },
+      where: { state: { in: ["RUNNING", "STALE", "ERROR"] } },
     });
     for (const w of toResume) {
       await startWatchdog(w.platformAccountId, w.intervalMs).catch((err) =>

@@ -10,19 +10,29 @@ import { env } from "../env.js";
  * change in `resolveConnector`.
  */
 const liveConnectors = new Map<string, MarketplaceConnector>();
+// Connectors still being created. Callers arriving at the same moment (e.g.
+// a resumed watchdog and the Accounts page's status poll at startup) must
+// share ONE instance — two Facebook connectors would drive the same browser
+// page at once ("navigation interrupted by another navigation").
+const pendingConnectors = new Map<string, Promise<MarketplaceConnector>>();
 
 export async function getConnector(platformAccountId: string): Promise<MarketplaceConnector> {
   const existing = liveConnectors.get(platformAccountId);
   if (existing) return existing;
+  const pending = pendingConnectors.get(platformAccountId);
+  if (pending) return pending;
 
-  const account = await prisma.platformAccount.findUniqueOrThrow({
-    where: { id: platformAccountId },
-    include: { platform: true },
-  });
-
-  const connector = await resolveConnector(account.platform.key, account.platform.kind, account.id, account.label, account.externalAccountId);
-  liveConnectors.set(platformAccountId, connector);
-  return connector;
+  const creating = (async () => {
+    const account = await prisma.platformAccount.findUniqueOrThrow({
+      where: { id: platformAccountId },
+      include: { platform: true },
+    });
+    const connector = await resolveConnector(account.platform.key, account.platform.kind, account.id, account.label, account.externalAccountId);
+    liveConnectors.set(platformAccountId, connector);
+    return connector;
+  })().finally(() => pendingConnectors.delete(platformAccountId));
+  pendingConnectors.set(platformAccountId, creating);
+  return creating;
 }
 
 async function resolveConnector(

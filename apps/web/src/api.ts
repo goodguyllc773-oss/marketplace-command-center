@@ -404,6 +404,7 @@ export interface ExtensionStatus {
   signedInAs?: string;
   signedInVia?: string;
   headerDiag?: string[];
+  keepingAwake?: boolean;
 }
 
 export const api = {

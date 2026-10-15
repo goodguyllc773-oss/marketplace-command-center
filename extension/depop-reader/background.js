@@ -60,7 +60,34 @@ function isLead(shop, tabId) {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   for (const tabs of tabsByShop.values()) tabs.delete(tabId);
+  void updateKeepAwake();
 });
+chrome.tabs.onUpdated.addListener((_tabId, change) => {
+  if (change.url) void updateKeepAwake();
+});
+
+// Keep the computer awake while a Depop messages tab is being watched, so
+// monitoring continues when the PC/Mac would otherwise go to sleep. The
+// screen may still turn off ("system" level). Closing every Depop messages
+// tab (or turning the setting off) lets the computer sleep normally again.
+// Note: closing a laptop lid or choosing Sleep yourself still sleeps it.
+let keepingAwake = false;
+async function updateKeepAwake() {
+  const { keepAwake } = await chrome.storage.local.get("keepAwake");
+  const tabs = await chrome.tabs.query({ url: "https://www.depop.com/messages*" });
+  const want = keepAwake !== false && tabs.length > 0;
+  if (want) chrome.power.requestKeepAwake("system");
+  else chrome.power.releaseKeepAwake();
+  if (want !== keepingAwake) {
+    keepingAwake = want;
+    await chrome.storage.local.set({ keepingAwake: want });
+  }
+  return want;
+}
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.keepAwake) void updateKeepAwake();
+});
+chrome.runtime.onStartup.addListener(() => void updateKeepAwake());
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (!msg) return;
@@ -76,6 +103,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 async function relay(msg) {
   const s = await settings();
   const signedInAs = msg.page?.signedInAs;
+  // Every check-in re-asserts keep-awake (the worker may have restarted).
+  msg.page = { ...msg.page, keepingAwake: await updateKeepAwake() };
   if (!s.apiKey || (!signedInAs && !s.accountId)) {
     return setStatus({
       ok: false,

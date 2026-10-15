@@ -14,6 +14,7 @@ async function init() {
     "refreshMinutes",
     "offersCheck",
     "offersMinutes",
+    "keepAwake",
   ]);
   $("serverUrl").value = s.serverUrl || DEFAULT_SERVER;
   $("apiKey").value = s.apiKey || "";
@@ -22,6 +23,7 @@ async function init() {
   $("refreshMinutes").value = s.refreshMinutes || 3;
   $("offersCheck").checked = s.offersCheck !== false;
   $("offersMinutes").value = s.offersMinutes || 15;
+  $("keepAwake").checked = s.keepAwake !== false;
   $("accountId").innerHTML = "";
   $("accountId").append(new Option("Automatic — whichever Depop account is signed in", AUTO, !s.accountId, !s.accountId));
   if (s.accountId) $("accountId").append(new Option(s.accountLabel || s.accountId, s.accountId, true, true));
@@ -71,6 +73,7 @@ $("save").addEventListener("click", async () => {
     refreshMinutes: Math.min(30, Math.max(2, Number($("refreshMinutes").value) || 3)),
     offersCheck: $("offersCheck").checked,
     offersMinutes: Math.min(120, Math.max(5, Number($("offersMinutes").value) || 15)),
+    keepAwake: $("keepAwake").checked,
   });
   $("msg").className = "ok";
   $("msg").textContent = "Saved. Open depop.com/messages in a tab and leave it open.";
