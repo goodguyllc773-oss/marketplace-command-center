@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   dateLabelToDay,
   parseConversationList,
+  offersPageIsEmpty,
   parseConversationView,
   parseOffersPage,
   previewMessageId,
@@ -160,7 +161,15 @@ const usd = (n: number | null | undefined) => (n == null ? "?" : `US$${n.toFixed
  */
 async function ingestOffers(accountId: string, status: ExtensionStatus, snapshot: unknown) {
   const cards = parseOffersPage(snapshot);
-  if (cards.length === 0) return { cards: 0, alerts: 0 };
+  if (cards.length === 0) {
+    // A shop with no offers yet: that empty tab is its starting point, so
+    // its first real offer alerts instead of becoming the baseline.
+    if (offersPageIsEmpty(snapshot)) {
+      const now = new Date().toISOString();
+      await saveExtensionStatus(accountId, { ...status, offersBaselineAt: status.offersBaselineAt ?? now, lastOffersAt: now });
+    }
+    return { cards: 0, alerts: 0 };
+  }
   const priced = cards.filter((c) => c.itemSlug && c.amount !== null);
   const foreign = await ownedByOtherShops(accountId, "offer", priced.map(offerIdFor));
   if (looksLikeOtherShopsPage(foreign.size, priced.length)) {

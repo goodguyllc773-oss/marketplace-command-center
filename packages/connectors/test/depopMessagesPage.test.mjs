@@ -5,6 +5,7 @@ import {
   parseConversationList,
   parseConversationView,
   parseDayLine,
+  offersPageIsEmpty,
   parseOffersPage,
   previewMessageId,
   titleFromSlug,
@@ -236,6 +237,26 @@ test("offers tab: every card with its item, amount, sides and section", () => {
 
 test("offers tab: garbage gives no cards", () => {
   for (const input of [null, {}, { blocks: "x" }, { blocks: [null, 1] }]) assert.deepEqual(parseOffersPage(input), []);
+});
+
+test("offers tab: a shop with no offers at all is recognised as empty", () => {
+  const block = (text, tag, y) => ({ text, tag, x: 448, y });
+  const empty = {
+    blocks: [
+      block("Active offers", "h3", 209),
+      block("You don't have any active offers right now", "p", 236),
+      block("Past offers", "h3", 292),
+      block("You don't have any past offers right now", "p", 319),
+    ],
+    links: [],
+  };
+  assert.deepEqual(parseOffersPage(empty), []);
+  assert.equal(offersPageIsEmpty(empty), true);
+  // Still loading, or only one section empty: not a confirmed empty tab.
+  assert.equal(offersPageIsEmpty({ blocks: [block("Active offers", "h3", 209)] }), false);
+  assert.equal(offersPageIsEmpty({ blocks: empty.blocks.slice(0, 2) }), false);
+  assert.equal(offersPageIsEmpty(offersSnapshot), false);
+  for (const input of [null, {}, { blocks: "x" }]) assert.equal(offersPageIsEmpty(input), false);
 });
 
 test("item titles from Depop slugs", () => {

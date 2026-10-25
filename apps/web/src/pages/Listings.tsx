@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type ListingFilters, type ListingItem } from "../api.js";
 import { Card, money } from "../components/Card.js";
+import { AccountHeading, AccountTabs, countByAccount, groupByAccount, useAccountFilter } from "../components/AccountTabs.js";
 
 const STATUSES = ["DRAFT", "ACTIVE", "SOLD", "REMOVED"];
 
@@ -20,17 +21,15 @@ function statusNote(l: ListingItem): string | undefined {
 
 export default function Listings() {
   const qc = useQueryClient();
-  const [platformId, setPlatformId] = useState("");
+  const { accounts, accountId, setAccountId } = useAccountFilter();
   const [status, setStatus] = useState("");
   const [needsDelistingOnly, setNeedsDelistingOnly] = useState(false);
   const [unlinkedOnly, setUnlinkedOnly] = useState(false);
   const [q, setQ] = useState("");
 
-  const platformsQuery = useQuery({ queryKey: ["platforms"], queryFn: api.platforms.list });
   const inventoryQuery = useQuery({ queryKey: ["inventory", {}], queryFn: () => api.inventory.list() });
 
   const filters: ListingFilters = {
-    platformId: platformId || undefined,
     status: status || undefined,
     needsDelisting: needsDelistingOnly ? true : undefined,
     unlinkedOnly: unlinkedOnly ? true : undefined,
@@ -49,7 +48,12 @@ export default function Listings() {
     onSuccess: invalidate,
   });
 
-  const listings = listingsQuery.data ?? [];
+  const all = listingsQuery.data ?? [];
+  const accountOf = (l: ListingItem) => l.platformAccount.id;
+  const listings = accountId ? all.filter((l) => accountOf(l) === accountId) : all;
+  const groups = accountId
+    ? [{ account: accounts.find((a) => a.id === accountId), items: listings }]
+    : groupByAccount(listings, accounts, accountOf);
   const inventoryItems = inventoryQuery.data ?? [];
 
   return (
@@ -57,9 +61,11 @@ export default function Listings() {
       <div>
         <h1 className="text-xl font-semibold text-white">Listings</h1>
         <p className="text-sm text-slate-400">
-          Every listing across every account. Link listings that are the same physical item to one Inventory item.
+          Every listing, sorted by account. Link listings that are the same physical item to one Inventory item.
         </p>
       </div>
+
+      <AccountTabs accounts={accounts} value={accountId} onChange={setAccountId} counts={countByAccount(all, accountOf)} />
 
       <Card>
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -69,18 +75,6 @@ export default function Listings() {
             placeholder="Search title…"
             className="flex-1 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
           />
-          <select
-            value={platformId}
-            onChange={(e) => setPlatformId(e.target.value)}
-            className="rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
-          >
-            <option value="">All platforms</option>
-            {platformsQuery.data?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
@@ -111,7 +105,6 @@ export default function Listings() {
             <thead>
               <tr className="border-b border-base-700 text-left text-xs uppercase text-slate-500">
                 <th className="py-2">Listing</th>
-                <th className="py-2">Platform / Account</th>
                 <th className="py-2 text-right">Price</th>
                 <th className="py-2">Status</th>
                 <th className="py-2 text-right">Views</th>
@@ -122,8 +115,16 @@ export default function Listings() {
                 <th className="py-2">Inventory link</th>
               </tr>
             </thead>
-            <tbody>
-              {listings.map((l) => (
+            {groups.map((g) => (
+            <tbody key={g.account?.id ?? "?"}>
+              {!accountId && g.account && (
+                <tr>
+                  <td colSpan={9} className="pb-1 pt-4">
+                    <AccountHeading account={g.account} count={g.items.length} />
+                  </td>
+                </tr>
+              )}
+              {g.items.map((l) => (
                 <tr key={l.id} className="border-b border-base-800">
                   <td className="py-2">
                     {l.url ? (
@@ -146,9 +147,6 @@ export default function Listings() {
                         </button>
                       </div>
                     )}
-                  </td>
-                  <td className="py-2 text-slate-400">
-                    {l.platformAccount.platform.name} / {l.platformAccount.label}
                   </td>
                   <td className="py-2 text-right">{money(l.price)}</td>
                   <td className="py-2">
@@ -179,6 +177,7 @@ export default function Listings() {
                 </tr>
               ))}
             </tbody>
+            ))}
           </table>
         </div>
       </Card>

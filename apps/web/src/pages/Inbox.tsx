@@ -8,6 +8,15 @@ import {
   type LoadHistoryResult,
 } from "../api.js";
 import { money } from "../components/Card.js";
+import {
+  AccountHeading,
+  AccountTabs,
+  accountName,
+  countByAccount,
+  groupByAccount,
+  platformName,
+  useAccountFilter,
+} from "../components/AccountTabs.js";
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -31,8 +40,7 @@ function timeAgo(iso: string): string {
 
 export default function Inbox() {
   const qc = useQueryClient();
-  const [platformId, setPlatformId] = useState<string | undefined>(undefined);
-  const [accountId, setAccountId] = useState<string | undefined>(undefined);
+  const { accounts, accountId, setAccountId } = useAccountFilter();
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const q = useDebounced(searchInput, 300);
@@ -42,12 +50,11 @@ export default function Inbox() {
   const [selectedWasUnread, setSelectedWasUnread] = useState(false);
   const [draft, setDraft] = useState("");
 
-  const summaryQuery = useQuery({ queryKey: ["inbox-summary"], queryFn: api.inbox.summary, refetchInterval: 10_000 });
-  const accountsQuery = useQuery({ queryKey: ["accounts"], queryFn: api.accounts.list });
-
+  // Every account's conversations come back; the account tabs split them
+  // here, so each tab can show its counts.
   const filters: ConversationFilters = useMemo(
-    () => ({ platformId, accountId, unread: unreadOnly ? true : undefined, q: q || undefined }),
-    [platformId, accountId, unreadOnly, q],
+    () => ({ unread: unreadOnly ? true : undefined, q: q || undefined }),
+    [unreadOnly, q],
   );
   const listQuery = useQuery({
     queryKey: ["conversations", filters],
@@ -106,56 +113,59 @@ export default function Inbox() {
     }
   };
 
-  const platforms = summaryQuery.data?.byPlatform ?? [];
-  const totalUnread = summaryQuery.data?.totalUnread ?? 0;
-  const accounts = accountsQuery.data ?? [];
-  const accountsForFilter = platformId ? accounts.filter((a) => a.platformId === platformId) : accounts;
+  const all = listQuery.data ?? [];
+  const accountOf = (c: ConversationListItem) => c.platformAccount.id;
+  const shown = accountId ? all.filter((c) => accountOf(c) === accountId) : all;
+  const groups = accountId ? null : groupByAccount(shown, accounts, accountOf);
+
+  const renderRow = (c: ConversationListItem) => (
+    <button
+      key={c.id}
+      onClick={() => openConversation(c)}
+      className={`flex w-full flex-col gap-0.5 border-b border-base-800 px-3 py-2.5 text-left hover:bg-base-800 ${
+        selectedId === c.id ? "bg-base-800" : ""
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-100">
+          {c.unread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
+          {c.buyerName}
+        </span>
+        <span className="shrink-0 text-[10px] text-slate-500">{timeAgo(c.lastMessageAt)}</span>
+      </div>
+      {c.listing && <div className="truncate text-xs text-slate-500">{c.listing.title}</div>}
+      {c.lastMessage && (
+        <div className="truncate text-xs text-slate-400">
+          {c.lastMessage.direction === "OUTBOUND" ? "You: " : ""}
+          {c.lastMessage.body}
+        </div>
+      )}
+    </button>
+  );
 
   return (
     <div className="flex h-[calc(100vh-3rem)] flex-col gap-4">
       <div>
         <h1 className="text-xl font-semibold text-white">Inbox</h1>
-        <p className="text-sm text-slate-400">Every conversation, across every platform and account, in one place.</p>
+        <p className="text-sm text-slate-400">Every conversation, sorted by account. Pick an account on the left to see only its conversations.</p>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[180px_320px_1fr] gap-4">
+      <div className="grid min-h-0 flex-1 grid-cols-[220px_320px_1fr] gap-4">
         {/* Filter rail */}
         <div className="flex flex-col gap-1 overflow-y-auto rounded-lg border border-base-700 bg-base-900 p-2">
-          <FilterPill
-            label="ALL"
-            count={totalUnread}
-            active={platformId === undefined}
-            onClick={() => setPlatformId(undefined)}
+          <AccountTabs
+            layout="column"
+            accounts={accounts}
+            value={accountId}
+            onChange={setAccountId}
+            counts={countByAccount(all, accountOf)}
+            badges={countByAccount(all, accountOf, (c) => c.unread)}
           />
-          {platforms.map((p) => (
-            <FilterPill
-              key={p.platformId}
-              label={p.platformName.replace(/\s*\(Live\)$/i, "").toUpperCase()}
-              count={p.unread}
-              active={platformId === p.platformId}
-              onClick={() => setPlatformId(p.platformId)}
-            />
-          ))}
-          <div className="mt-2 border-t border-base-800 pt-2">
+          <div className="mt-3 border-t border-base-800 pt-2">
             <label className="flex items-center gap-2 px-2 text-xs text-slate-400">
               <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
               Unread only
             </label>
-          </div>
-          <div className="mt-2 px-2">
-            <label className="text-xs text-slate-500">Account</label>
-            <select
-              value={accountId ?? ""}
-              onChange={(e) => setAccountId(e.target.value || undefined)}
-              className="mt-1 w-full rounded-md border border-base-700 bg-base-800 px-2 py-1 text-xs"
-            >
-              <option value="">All accounts</option>
-              {accountsForFilter.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.platform.name} / {a.label}
-                </option>
-              ))}
-            </select>
           </div>
         </div>
 
@@ -171,36 +181,21 @@ export default function Inbox() {
           </div>
           <div className="flex-1 overflow-y-auto">
             {listQuery.isLoading && <div className="p-4 text-sm text-slate-400">Loading…</div>}
-            {listQuery.data && listQuery.data.length === 0 && (
+            {listQuery.data && shown.length === 0 && (
               <div className="p-4 text-sm text-slate-500">No conversations match these filters.</div>
             )}
-            {listQuery.data?.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => openConversation(c)}
-                className={`flex w-full flex-col gap-0.5 border-b border-base-800 px-3 py-2.5 text-left hover:bg-base-800 ${
-                  selectedId === c.id ? "bg-base-800" : ""
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-100">
-                    {c.unread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
-                    {c.buyerName}
-                  </span>
-                  <span className="shrink-0 text-[10px] text-slate-500">{timeAgo(c.lastMessageAt)}</span>
-                </div>
-                {c.listing && <div className="truncate text-xs text-slate-500">{c.listing.title}</div>}
-                {c.lastMessage && (
-                  <div className="truncate text-xs text-slate-400">
-                    {c.lastMessage.direction === "OUTBOUND" ? "You: " : ""}
-                    {c.lastMessage.body}
+            {groups
+              ? groups.map((g) => (
+                  <div key={g.account.id}>
+                    <AccountHeading
+                      account={g.account}
+                      count={g.items.length}
+                      className="sticky top-0 z-10 border-b border-base-700 bg-base-800 px-3 py-1.5"
+                    />
+                    {g.items.map(renderRow)}
                   </div>
-                )}
-                <div className="text-[10px] uppercase tracking-wide text-slate-600">
-                  {c.platformAccount.platform.name} / {c.platformAccount.label}
-                </div>
-              </button>
-            ))}
+                ))
+              : shown.map(renderRow)}
           </div>
         </div>
 
@@ -214,7 +209,7 @@ export default function Inbox() {
                 <div>
                   <div className="text-sm font-semibold text-white">{detailQuery.data.buyerName}</div>
                   <div className="text-xs text-slate-500">
-                    {detailQuery.data.platformAccount.platform.name} / {detailQuery.data.platformAccount.label}
+                    {platformName(detailQuery.data.platformAccount)} · {accountName(detailQuery.data.platformAccount)}
                     {detailQuery.data.listing && <> · {detailQuery.data.listing.title}</>}
                     {detailQuery.data.listing?.price !== undefined && <> ({money(detailQuery.data.listing.price)})</>}
                   </div>
@@ -399,32 +394,4 @@ function HydrationBadge({
   if (state === "HYDRATED") return <span className="text-slate-500">Hydrated{hydratedAt ? ` · ${timeAgo(hydratedAt)}` : ""}</span>;
   if (state === "SKIPPED_UNREAD") return <span className="text-slate-500">Skipped — unread (read it on Facebook first, or load it anyway)</span>;
   return <span className="text-slate-600">Not loaded yet</span>;
-}
-
-function FilterPill({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs ${
-        active ? "bg-base-700 text-white" : "text-slate-400 hover:bg-base-800 hover:text-slate-200"
-      }`}
-    >
-      <span className="font-medium">{label}</span>
-      {count > 0 && (
-        <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${active ? "bg-accent text-base-950" : "bg-base-700 text-slate-300"}`}>
-          {count}
-        </span>
-      )}
-    </button>
-  );
 }

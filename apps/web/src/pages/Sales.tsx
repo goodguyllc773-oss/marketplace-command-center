@@ -2,21 +2,26 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Sale, type SaleEditableFields, type SaleFilters } from "../api.js";
 import { Card, money } from "../components/Card.js";
+import { AccountHeading, AccountTabs, countByAccount, groupByAccount, useAccountFilter } from "../components/AccountTabs.js";
 
 const emptyEdit = { purchaseCost: "", shippingCost: "", shippingRevenue: "", discount: "", refundAmount: "", otherCosts: "" };
 
 export default function Sales() {
   const qc = useQueryClient();
-  const [platformId, setPlatformId] = useState("");
+  const { accounts, accountId, setAccountId } = useAccountFilter();
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [edit, setEdit] = useState(emptyEdit);
 
-  const platformsQuery = useQuery({ queryKey: ["platforms"], queryFn: api.platforms.list });
-  const filters: SaleFilters = { platformId: platformId || undefined, q: q || undefined };
+  const filters: SaleFilters = { q: q || undefined };
   const salesQuery = useQuery({ queryKey: ["sales", filters], queryFn: () => api.sales.list(filters) });
 
-  const sales = salesQuery.data ?? [];
+  const all = salesQuery.data ?? [];
+  const accountOf = (s: Sale) => s.order.platformAccount.id;
+  const sales = accountId ? all.filter((s) => accountOf(s) === accountId) : all;
+  const groups = accountId
+    ? [{ account: accounts.find((a) => a.id === accountId), items: sales }]
+    : groupByAccount(sales, accounts, accountOf);
   const selected = sales.find((s) => s.id === selectedId) ?? null;
 
   useEffect(() => {
@@ -59,6 +64,8 @@ export default function Sales() {
         </p>
       </div>
 
+      <AccountTabs accounts={accounts} value={accountId} onChange={setAccountId} counts={countByAccount(all, accountOf)} />
+
       <div className="grid grid-cols-[1fr_320px] gap-4">
         <Card>
           <div className="mb-3 flex gap-2">
@@ -68,18 +75,6 @@ export default function Sales() {
               placeholder="Search listing title…"
               className="flex-1 rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
             />
-            <select
-              value={platformId}
-              onChange={(e) => setPlatformId(e.target.value)}
-              className="rounded-md border border-base-700 bg-base-800 px-2 py-1.5 text-sm"
-            >
-              <option value="">All platforms</option>
-              {platformsQuery.data?.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
           </div>
 
           {salesQuery.isLoading && <div className="text-slate-400">Loading…</div>}
@@ -90,7 +85,6 @@ export default function Sales() {
               <thead>
                 <tr className="border-b border-base-700 text-left text-xs uppercase text-slate-500">
                   <th className="py-2">Listing</th>
-                  <th className="py-2">Platform / Account</th>
                   <th className="py-2">Sold</th>
                   <th className="py-2 text-right">Price</th>
                   <th className="py-2 text-right">Fees</th>
@@ -98,8 +92,16 @@ export default function Sales() {
                   <th className="py-2 text-right">Margin</th>
                 </tr>
               </thead>
-              <tbody>
-                {sales.map((s) => (
+              {groups.map((g) => (
+              <tbody key={g.account?.id ?? "?"}>
+                {!accountId && g.account && (
+                  <tr>
+                    <td colSpan={6} className="pb-1 pt-4">
+                      <AccountHeading account={g.account} count={g.items.length} />
+                    </td>
+                  </tr>
+                )}
+                {g.items.map((s) => (
                   <tr
                     key={s.id}
                     onClick={() => setSelectedId(s.id)}
@@ -113,9 +115,6 @@ export default function Sales() {
                         </span>
                       )}
                     </td>
-                    <td className="py-2 text-slate-400">
-                      {s.order.platformAccount.platform.name} / {s.order.platformAccount.label}
-                    </td>
                     <td className="py-2 text-slate-400">{new Date(s.soldAt).toLocaleDateString()}</td>
                     <td className="py-2 text-right">{money(s.salePrice)}</td>
                     <td className="py-2 text-right text-slate-400">{money(s.platformFees + s.paymentFees)}</td>
@@ -126,10 +125,11 @@ export default function Sales() {
                   </tr>
                 ))}
               </tbody>
+              ))}
               {sales.length > 0 && (
                 <tfoot>
                   <tr className="border-t border-base-700 text-xs uppercase text-slate-500">
-                    <td className="py-2" colSpan={3}>
+                    <td className="py-2" colSpan={2}>
                       Total ({sales.length})
                     </td>
                     <td className="py-2 text-right text-slate-300">{money(totals.revenue)}</td>

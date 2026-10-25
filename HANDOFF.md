@@ -10,6 +10,46 @@ messages, Offers, and for @thismysize its free Proton inbox tab. The
 details are in the 2026-10-24 section below. The older notes that
 follow are kept for history._
 
+_**2026-10-25 (Windows PC): data audit plus pages sorted by account.**
+Committed and pushed._
+
+- _**Audit: both shops' data is in MCC.**_
+  - _@dsgnr_ex: 12 conversations, 11 offers, 1 listing (sold), 27
+    events._
+  - _@thismysize: 22 conversations, 24 listings, 2 events, Proton
+    connected (49 rows), 0 offers._
+  - _@thismysize really has no offers. Its Offers tab reads "You don't
+    have any active/past offers right now", per the snapshot in
+    `apps/server/.inspect/depop-ext`._
+- _**Bug fixed: a shop with no offers never got an Offers starting
+  point.**_
+  - _Cause: `ingestOffers` returned early on 0 cards, so the shop's
+    first real offer would have become the baseline, with no alert._
+  - _Fix: the new `offersPageIsEmpty()` in `depopMessagesPage.ts`
+    (needs both "don't have any active" and "… past offers"). It sets
+    `offersBaselineAt`. 1 new test, 33 pass._
+  - _VERIFIED: @thismysize's `offersBaselineAt` was set at 00:59Z._
+- _**Pages sorted by account** (the user's request: not "all in one
+  place")._
+  - _New `apps/web/src/components/AccountTabs.tsx`:_
+    - _`useAccountFilter` remembers the pick in localStorage
+      `mcc:account`, shared across pages;_
+    - _`AccountTabs` gives "All accounts" plus one tab per account,
+      grouped under its platform, with counts;_
+    - _Depop shops show as `@handle · label`;_
+    - _`groupByAccount`, `AccountHeading`._
+  - _Used on Inbox, Offers, Listings, Sales and Activity:_
+    - _"All accounts" shows one titled section per account;_
+    - _one account shows only its own items;_
+    - _the per-row account column/line is gone;_
+    - _Inbox's left rail is now the account list with unread badges,
+      replacing the platform pills and account dropdown._
+  - _`GET /api/events` takes `accountId`._
+  - _VERIFIED in the browser pane: correct counts and sections on all
+    five pages, no console errors._
+- _Not done: the Dashboard is still by platform; per-account tiles
+  there would be the next step if wanted._
+
 _Earlier (2026-10-08) where-we-left-off:_
 
 - _Everything is committed and pushed to the private GitHub repo. Every

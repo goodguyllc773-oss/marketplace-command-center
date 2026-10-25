@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type Offer } from "../api.js";
 import { Card, money } from "../components/Card.js";
+import { AccountHeading, AccountTabs, countByAccount, groupByAccount, useAccountFilter } from "../components/AccountTabs.js";
 
 const ROLE_TABS = [
   { id: "", label: "All" },
@@ -26,7 +27,13 @@ export default function Offers() {
     queryFn: () => api.offers.list(role || undefined),
     refetchInterval: 30_000,
   });
-  const offers = offersQuery.data ?? [];
+  const { accounts, accountId, setAccountId } = useAccountFilter();
+  const all = offersQuery.data ?? [];
+  const accountOf = (o: Offer) => o.platformAccount.id;
+  const offers = accountId ? all.filter((o) => accountOf(o) === accountId) : all;
+  const groups = accountId
+    ? [{ account: accounts.find((a) => a.id === accountId), items: offers }]
+    : groupByAccount(offers, accounts, accountOf);
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,6 +44,8 @@ export default function Offers() {
           Depop Reader extension).
         </p>
       </div>
+
+      <AccountTabs accounts={accounts} value={accountId} onChange={setAccountId} counts={countByAccount(all, accountOf)} />
 
       <Card>
         <div className="mb-3 flex gap-1">
@@ -53,7 +62,9 @@ export default function Offers() {
         {offersQuery.isLoading && <div className="text-slate-400">Loading…</div>}
         {!offersQuery.isLoading && offers.length === 0 && (
           <div className="text-sm text-slate-500">
-            No offers yet. Depop offers appear once the Depop Reader extension has read your Offers tab.
+            {accountId
+              ? "No offers on this account yet. New ones show up here (and on Discord) as soon as they arrive."
+              : "No offers yet. Depop offers appear once the Depop Reader extension has read your Offers tab."}
           </div>
         )}
         {offers.length > 0 && (
@@ -65,15 +76,23 @@ export default function Offers() {
                   <th className="py-2">Offer</th>
                   <th className="py-2">Status</th>
                   <th className="py-2">Deadline</th>
-                  <th className="py-2">Account</th>
                   <th className="py-2 text-right">Updated</th>
                 </tr>
               </thead>
-              <tbody>
-                {offers.map((o) => (
-                  <OfferRow key={o.id} offer={o} />
-                ))}
-              </tbody>
+              {groups.map((g) => (
+                <tbody key={g.account?.id ?? "?"}>
+                  {!accountId && g.account && (
+                    <tr>
+                      <td colSpan={5} className="pb-1 pt-4">
+                        <AccountHeading account={g.account} count={g.items.length} />
+                      </td>
+                    </tr>
+                  )}
+                  {g.items.map((o) => (
+                    <OfferRow key={o.id} offer={o} />
+                  ))}
+                </tbody>
+              ))}
             </table>
           </div>
         )}
@@ -111,9 +130,6 @@ function OfferRow({ offer: o }: { offer: Offer }) {
         </span>
       </td>
       <td className="py-2 pr-3 text-slate-400">{o.deadlineLabel ?? "—"}</td>
-      <td className="py-2 pr-3 text-slate-400">
-        {o.platformAccount.platform.name.replace(/\s*\(Live\)$/i, "")} / {o.platformAccount.label}
-      </td>
       <td className="py-2 text-right text-slate-500">{new Date(o.updatedAt).toLocaleString()}</td>
     </tr>
   );

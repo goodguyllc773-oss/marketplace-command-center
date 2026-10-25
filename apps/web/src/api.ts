@@ -452,7 +452,8 @@ export const api = {
   },
 
   events: {
-    list: (limit = 50) => request<ActivityEvent[]>(`/api/events?limit=${limit}`),
+    list: (limit = 50, accountId?: string) =>
+      request<ActivityEvent[]>(`/api/events?limit=${limit}${accountId ? `&accountId=${encodeURIComponent(accountId)}` : ""}`),
   },
 
   inbox: {

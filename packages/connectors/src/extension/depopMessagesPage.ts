@@ -349,6 +349,16 @@ export function parseOffersPage(snapshot: unknown): DepopOfferCard[] {
   });
 }
 
+/** The Offers tab loaded and says there are no offers at all (both
+ * sections show their "You don't have any … offers right now" line). */
+export function offersPageIsEmpty(snapshot: unknown): boolean {
+  const s = snapshot as { blocks?: unknown } | null;
+  if (!s || !Array.isArray(s.blocks)) return false;
+  const texts = (s.blocks as RawBlock[]).map((b) => (b && typeof b.text === "string" ? b.text : ""));
+  const none = (section: string) => texts.some((t) => new RegExp(`don[’']t have any ${section} offers`, "i").test(t));
+  return none("active") && none("past");
+}
+
 /** "ballakamara7e0-baltimore-ravens-lamar-jackson-purple-4cb8" →
  * "Baltimore ravens lamar jackson purple": Depop slugs are
  * <username>-<title words>-<short hash>. */
