@@ -184,6 +184,7 @@ export default function Accounts() {
                 </button>
               </div>
               {acc.platform.key === "depop-live" && <DepopExtensionControl accountId={acc.id} />}
+              {acc.platform.key === "depop-live" && <ProtonInboxLine accountId={acc.id} />}
               {acc.platform.key === "depop-live" && <EmailControl accountId={acc.id} />}
             </div>
           ))}
@@ -354,6 +355,36 @@ function UnknownDepopShops({ onAdded }: { onAdded: () => void }) {
         </div>
       ))}
       {add.isError && <p className="text-xs text-rose-400">{add.error instanceof Error ? add.error.message : "Couldn't add it"}</p>}
+    </div>
+  );
+}
+
+/** A Proton Mail inbox tab read by the extension (free Proton plans have
+ * no IMAP) — shown only for shops that have one. */
+function ProtonInboxLine({ accountId }: { accountId: string }) {
+  const { data: s } = useQuery({
+    queryKey: ["mail-status", accountId],
+    queryFn: () => api.accounts.mailStatus(accountId),
+    refetchInterval: 30_000,
+  });
+  if (!s) return null;
+  const live = Date.now() - new Date(s.lastSeenAt).getTime() < EXTENSION_LIVE_MS;
+  return (
+    <div className="w-full text-xs">
+      {live ? (
+        <span className="text-emerald-400">
+          ● Proton inbox tab{s.mailbox ? `: ${s.mailbox}` : ""}
+          <span className="text-slate-500">
+            {s.depopRows !== undefined && ` · ${s.depopRows} Depop emails in view`} · last check-in{" "}
+            {new Date(s.lastSeenAt).toLocaleTimeString()}
+          </span>
+        </span>
+      ) : (
+        <span className="text-slate-500">
+          Proton inbox tab: not seen since {new Date(s.lastSeenAt).toLocaleString()} — keep mail.proton.me open in this
+          shop's Chrome window.
+        </span>
+      )}
     </div>
   );
 }

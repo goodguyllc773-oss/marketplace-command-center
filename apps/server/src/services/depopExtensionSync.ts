@@ -161,6 +161,12 @@ const usd = (n: number | null | undefined) => (n == null ? "?" : `US$${n.toFixed
 async function ingestOffers(accountId: string, status: ExtensionStatus, snapshot: unknown) {
   const cards = parseOffersPage(snapshot);
   if (cards.length === 0) return { cards: 0, alerts: 0 };
+  const priced = cards.filter((c) => c.itemSlug && c.amount !== null);
+  const foreign = await ownedByOtherShops(accountId, "offer", priced.map(offerIdFor));
+  if (looksLikeOtherShopsPage(foreign.size, priced.length)) {
+    console.warn(`[depop-extension] ${accountId}: Offers tab shows another shop's offers (account switch in progress?) — ignored`);
+    return { cards: 0, alerts: 0 };
+  }
   const baseline = !status.offersBaselineAt;
   const now = new Date();
   const events: StandardEvent[] = [];
@@ -189,7 +195,8 @@ async function ingestOffers(accountId: string, status: ExtensionStatus, snapshot
     }
 
     const role = listing || card.offeredBy === "BUYER" ? "SELLING" : "BUYING";
-    const externalOfferId = `depop-offer:${slug}:${card.offeredBy ?? "unknown"}:${card.amount.toFixed(2)}`;
+    const externalOfferId = offerIdFor(card);
+    if (foreign.has(externalOfferId)) continue;
     const prior = await prisma.offer.findUnique({
       where: { platformAccountId_externalOfferId: { platformAccountId: accountId, externalOfferId } },
     });
@@ -240,6 +247,11 @@ async function ingestOffers(accountId: string, status: ExtensionStatus, snapshot
   return { cards: cards.length, alerts: events.length };
 }
 
+/** An offer is item + who offered + amount, so its status changes update one record. */
+function offerIdFor(card: { itemSlug: string | null; offeredBy: string | null; amount: number | null }): string {
+  return `depop-offer:${card.itemSlug}:${card.offeredBy ?? "unknown"}:${(card.amount ?? 0).toFixed(2)}`;
+}
+
 function offerEvent(accountId: string, now: Date, type: StandardEvent["type"], offerId: string, status: string, summary: string): StandardEvent {
   return {
     id: randomUUID(),
@@ -269,6 +281,7 @@ async function ingestView(accountId: string, pagePath: string, snapshot: unknown
   const now = new Date();
   const view = parseConversationView(snapshot, pagePath, now);
   if (!view || view.messages.length === 0) return 0;
+  if ((await ownedByOtherShops(accountId, "conversation", [view.conversationId])).size > 0) return 0;
 
   const existing = await prisma.conversation.findUnique({
     where: { platformAccountId_externalConversationId: { platformAccountId: accountId, externalConversationId: view.conversationId } },
@@ -340,11 +353,38 @@ async function ingestView(accountId: string, pagePath: string, snapshot: unknown
   return added;
 }
 
+/**
+ * Which of these Depop ids are already stored under the user's OTHER Depop
+ * shops. A Depop conversation belongs to one shop, so these are never stored
+ * again here. Seen live (2026-10-24): while a tab switched from one signed-in
+ * shop to another, Depop briefly showed the old shop's conversation list
+ * under the new shop's header, and 12 conversations were filed under the
+ * wrong shop. (Trade-off: a conversation between two of the user's own
+ * shops is only kept under whichever shop saw it first.)
+ */
+async function ownedByOtherShops(accountId: string, kind: "conversation" | "offer", ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const otherShop = { platformAccountId: { not: accountId }, platformAccount: { platform: { key: PLATFORM_ID } } };
+  const found =
+    kind === "conversation"
+      ? (await prisma.conversation.findMany({ where: { externalConversationId: { in: ids }, ...otherShop }, select: { externalConversationId: true } })).map((r) => r.externalConversationId)
+      : (await prisma.offer.findMany({ where: { externalOfferId: { in: ids }, ...otherShop }, select: { externalOfferId: true } })).map((r) => r.externalOfferId);
+  return new Set(found);
+}
+
+/** Mostly another shop's items = a stale page mid account switch: ignore it whole. */
+const looksLikeOtherShopsPage = (foreign: number, total: number) => foreign >= 3 && foreign * 2 >= total;
+
 async function ingest(accountId: string, status: ExtensionStatus, snapshot: unknown) {
   const page = parseConversationList(snapshot);
   // Nothing recognisable (still loading, or a layout we don't know) —
   // never treat that as "all conversations gone".
   if (page.rows.length === 0) return { conversations: 0, newMessages: 0, alerts: 0 };
+  const foreign = await ownedByOtherShops(accountId, "conversation", page.rows.map((r) => r.conversationId));
+  if (looksLikeOtherShopsPage(foreign.size, page.rows.length)) {
+    console.warn(`[depop-extension] ${accountId}: list shows another shop's conversations (account switch in progress?) — ignored`);
+    return { conversations: 0, newMessages: 0, alerts: 0 };
+  }
 
   const baseline = !status.baselineAt;
   const now = new Date();
@@ -363,6 +403,7 @@ async function ingest(accountId: string, status: ExtensionStatus, snapshot: unkn
 
   let newMessages = 0;
   for (const row of page.rows) {
+    if (foreign.has(row.conversationId)) continue;
     const day = dateLabelToDay(row.dateLabel, now);
     // Only "Today" carries no fixed day to date by; it's dated when first seen.
     const sentAt = day && !/^today$/i.test(row.dateLabel) ? new Date(`${day}T12:00:00`) : now;

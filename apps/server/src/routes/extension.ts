@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { checkExtensionsOffline, getExtensionStatus, handleExtensionReport } from "../services/depopExtensionSync.js";
+import { ingestProtonInbox } from "../services/protonMailSync.js";
 
 /**
  * Receives reports from the "MCC Depop Reader" Chrome extension
@@ -34,6 +35,14 @@ const ReportSchema = z.object({
     headerDiag: z.array(z.string().max(300)).max(60).optional(),
     keepingAwake: z.boolean().optional(),
   }),
+  snapshot: z.unknown().optional(),
+});
+
+const MailReportSchema = z.object({
+  shop: z.string().max(60).optional(),
+  accountId: z.string().optional(),
+  kind: z.enum(["heartbeat", "snapshot"]),
+  page: z.object({ path: z.string(), visible: z.boolean().optional() }),
   snapshot: z.unknown().optional(),
 });
 
@@ -101,6 +110,57 @@ export function registerExtensionRoutes(app: FastifyInstance): void {
     }
     if (kind === "snapshot" && !/^\/messages\/?$/.test(page.path)) saveSnapshot(accountId, { page, snapshot });
     return { ok: true };
+  });
+
+  /**
+   * Proton Mail inbox reports (free Proton plans have no IMAP Bridge): the
+   * extension reads the inbox list the user keeps open and sends ONLY rows
+   * from depop.com senders (never sign-in emails). The shop is the Depop
+   * account signed in in the same Chrome profile. Rows become alerts via
+   * services/protonMailSync.ts.
+   */
+  app.post("/api/extension/mail/report", { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
+    const body = MailReportSchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Malformed report" });
+    const resolved = await resolveShop(body.data.shop, body.data.accountId);
+    if (!resolved.shop) {
+      return reply.code(404).send({
+        error: resolved.unknown
+          ? `@${resolved.unknown} isn't in MCC yet — add it on MCC's Accounts page`
+          : "Open the shop's depop.com/messages tab in this Chrome window first, so the inbox can be matched to the shop",
+      });
+    }
+    const accountId = resolved.shop.id;
+    const snapshot = body.data.snapshot as { mailbox?: unknown; rows?: unknown[]; depopAnchors?: unknown } | undefined;
+    const key = `depopMail:${accountId}`;
+    const prev = await prisma.appSetting.findUnique({ where: { key } });
+    const now = new Date().toISOString();
+    const previous = prev ? (JSON.parse(prev.value) as { connectedAt?: string }) : {};
+    const isSnapshot = body.data.kind === "snapshot";
+    const status = {
+      ...previous,
+      lastSeenAt: now,
+      // The first inbox seen is the starting point: older emails never alert.
+      connectedAt: previous.connectedAt ?? now,
+      ...(isSnapshot
+        ? { lastSnapshotAt: now, mailbox: typeof snapshot?.mailbox === "string" ? snapshot.mailbox : undefined, depopRows: snapshot?.rows?.length ?? 0 }
+        : {}),
+    };
+    const value = JSON.stringify(status);
+    await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } });
+    if (isSnapshot) {
+      const result = await ingestProtonInbox(accountId, snapshot, status.connectedAt);
+      request.log.info(`[proton-inbox] ${accountId}: ${result.rows} Depop emails, ${result.alerts} alerts`);
+      // Layout not recognised → keep the structural clues to fix the reader.
+      if (snapshot?.depopAnchors) saveSnapshot(`proton-${accountId}`, { page: body.data.page, snapshot });
+    }
+    return { ok: true };
+  });
+
+  app.get("/api/accounts/:id/mail-status", async (request) => {
+    const { id } = request.params as { id: string };
+    const row = await prisma.appSetting.findUnique({ where: { key: `depopMail:${id}` } });
+    return row ? JSON.parse(row.value) : null;
   });
 
   /** Signed-in Depop accounts seen in the last day that MCC has no shop for. */

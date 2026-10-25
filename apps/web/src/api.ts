@@ -427,6 +427,8 @@ export const api = {
         `/api/accounts/${id}/login-status`,
       ),
     extensionStatus: (id: string) => request<ExtensionStatus | null>(`/api/accounts/${id}/extension-status`),
+    mailStatus: (id: string) =>
+      request<{ lastSeenAt: string; mailbox?: string; depopRows?: number; connectedAt?: string } | null>(`/api/accounts/${id}/mail-status`),
     unknownDepopShops: () => request<{ username: string; lastSeenAt: string }[]>("/api/extension/depop/unknown-shops"),
   },
 

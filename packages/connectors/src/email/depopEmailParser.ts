@@ -87,6 +87,18 @@ export function parseDepopEmails(emails: FetchedEmail[], connectedAt: string): D
       continue;
     }
 
+    // VERIFIED (subject, from the user's Proton inbox list 2026-10-24):
+    // "@buyer made you an offer" — a buyer's offer on one of the user's items.
+    if (/made you an offer/i.test(e.subject) && user) {
+      notice("OFFER_RECEIVED", `@${user} made you an offer${amount ? ` of $${amount.toFixed(2)}` : ""} — open Depop to accept, decline or counter (you're selling)`, {
+        role: "selling",
+        buyerName: `@${user}`,
+        amount,
+        currency: "USD",
+      });
+      continue;
+    }
+
     // UNVERIFIED (no real example yet): a buyer messaging the user. Goes to
     // the Inbox as that buyer's conversation; refine once one arrives.
     if (/\bmessage/i.test(e.subject) && user) {

@@ -8,4 +8,6 @@ export { DepopBrowserConnector } from "./browser/depopBrowserConnector.js";
 export { FacebookBrowserConnector } from "./browser/facebookBrowserConnector.js";
 export { openLoginWindow, hasSavedSession, deleteBrowserProfile } from "./browser/browserSession.js";
 export * from "./extension/depopMessagesPage.js";
+export * from "./extension/protonInbox.js";
+export { parseDepopEmails } from "./email/depopEmailParser.js";
 export { verifyEmailLogin, fetchRecentEmailsFrom, type EmailConfig, type FetchedEmail } from "./email/emailSource.js";

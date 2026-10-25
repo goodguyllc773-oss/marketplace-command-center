@@ -32,10 +32,13 @@ chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 // Chrome only injects content scripts into pages loaded AFTER the extension
 // is (re)loaded — so reconnect Depop tabs that are already open.
 chrome.runtime.onInstalled.addListener(async () => {
-  const tabs = await chrome.tabs.query({ url: "https://www.depop.com/*" });
-  for (const tab of tabs) {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }).catch(() => undefined);
-  }
+  const reconnect = async (url, file) => {
+    for (const tab of await chrome.tabs.query({ url })) {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [file] }).catch(() => undefined);
+    }
+  };
+  await reconnect("https://www.depop.com/*", "content.js");
+  await reconnect("https://mail.proton.me/*", "proton.js");
 });
 
 // One "lead" tab per signed-in shop does the clicking (Refresh / Offers);
@@ -98,13 +101,37 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return;
   }
   if (msg.type === "mcc-depop") void relay(msg);
+  if (msg.type === "mcc-mail") void relayMail(msg);
 });
+
+// The Proton inbox tab belongs to whichever Depop shop is signed in in
+// this same Chrome profile (one profile = one shop) — remembered from the
+// Depop tab's reports.
+async function relayMail(msg) {
+  const s = await settings();
+  const { lastSignedInAs } = await chrome.storage.local.get("lastSignedInAs");
+  if (!s.apiKey) return;
+  try {
+    const res = await fetch(`${s.serverUrl}/api/extension/mail/report`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": s.apiKey },
+      body: JSON.stringify({ shop: lastSignedInAs || undefined, accountId: s.accountId || undefined, kind: msg.kind, page: msg.page, snapshot: msg.snapshot }),
+    });
+    const body = res.ok ? null : await res.json().catch(() => ({}));
+    await chrome.storage.local.set({
+      lastMailStatus: { ok: res.ok, error: body?.error, at: new Date().toISOString(), shop: lastSignedInAs },
+    });
+  } catch {
+    await chrome.storage.local.set({ lastMailStatus: { ok: false, error: "Couldn't reach MCC", at: new Date().toISOString() } });
+  }
+}
 
 async function relay(msg) {
   const s = await settings();
   const signedInAs = msg.page?.signedInAs;
   // Every check-in re-asserts keep-awake (the worker may have restarted).
   msg.page = { ...msg.page, keepingAwake: await updateKeepAwake() };
+  if (signedInAs) await chrome.storage.local.set({ lastSignedInAs: signedInAs });
   if (!s.apiKey || (!signedInAs && !s.accountId)) {
     return setStatus({
       ok: false,

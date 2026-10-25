@@ -4,8 +4,13 @@ Read this first, every time, before touching anything else. Update it
 before you stop and immediately before any context compaction (see
 CLAUDE.md for the exact rule).
 
-_Last updated 2026-10-08 (Windows PC), end of session. **Where we left
-off:**_
+_Last updated 2026-10-24/25 (Windows PC). **Where we left off:** both
+Depop shops are fully monitored. Two Chrome profiles, Depop Reader 0.8.0:
+messages, Offers, and for @thismysize its free Proton inbox tab. The
+details are in the 2026-10-24 section below. The older notes that
+follow are kept for history._
+
+_Earlier (2026-10-08) where-we-left-off:_
 
 - _Everything is committed and pushed to the private GitHub repo. Every
   Claude session now auto-syncs with GitHub at start (SessionStart
@@ -69,8 +74,69 @@ _Still outstanding on the user's side:_
 - _Extension 0.5.0 has never run (no `signedInAs` yet)._
 - _@thismysize's email isn't connected._
 
-_**The user's pending steps (as of the 2026-10-14 closeout). Ask about
-these first:**_
+_**2026-10-24 (Windows PC): both Depop shops monitored at once,
+VERIFIED.**_
+
+- _Setup: two Chrome profiles. The original window is signed into
+  @thismysize; a new "dsgnr_ex" profile window into @dsgnr_ex,
+  extension loaded via Load unpacked with zero settings._
+- _Both report: signedInAs correct (via "likes link"), keepingAwake true,
+  auto-refresh running in each (thismysize's first at 00:09:47Z),
+  dsgnr_ex's Offers check ran._
+- _**Bug found and fixed: wrong-shop filing during an account switch.**
+  When a tab switched from @dsgnr_ex to @thismysize, Depop briefly
+  showed the old conversation list under the new header. 12 @dsgnr_ex
+  conversations were stored under @thismysize (no alerts fired: it was
+  @thismysize's baseline)._
+  - _Fix in `depopExtensionSync.ts`: `ownedByOtherShops()` means a
+    conversation/offer id already stored under another Depop shop is
+    never stored again. A page mostly made of another shop's items
+    (`looksLikeOtherShopsPage`: ≥3 and ≥50%) is ignored whole._
+  - _Applied to the list, open conversations, and the Offers tab.
+    Trade-off: a conversation between two of the user's own shops stays
+    under whichever saw it first._
+  - _Cleaned the DB (one-off script, deleted): removed the 12 copies.
+    Now @dsgnr_ex 12 conversations, @thismysize 22._
+- _**@thismysize's email is free ProtonMail (no IMAP Bridge), so the
+  extension reads the open mail.proton.me inbox tab (extension 0.8.0,
+  `proton.js`).**_
+  - _Layout VERIFIED on the real inbox:_
+    - _row `[data-shortcut-target=item-container]` with
+      `data-element-id`;_
+    - _sender = title of `[data-testid=message-column:sender-address]`;_
+    - _subject = title of `[data-testid=message-row:subject]`;_
+    - _`.item-unread-dot`;_
+    - _"N messages in conversation" (Proton groups threads);_
+    - _a long date "Saturday, October 24th, 2026 at 10:03 AM"._
+  - _Privacy: only rows from `*depop.com` senders leave the browser, never
+    `auth.depop.com` (magic-link sign-in). It never clicks or opens
+    anything; only the list is read, so subjects only, no amounts._
+  - _Shop: the background worker remembers `lastSignedInAs` from the
+    Depop tab in the same Chrome profile and sends it with mail reports._
+  - _Server: `POST /api/extension/mail/report` stores status in AppSetting
+    `depopMail:<id>` (`connectedAt` = first seen is the baseline). Then
+    `services/protonMailSync.ts` parses the rows (`parseProtonRows`,
+    `protonInbox.ts`) into FetchedEmail objects (id
+    `proton:<rowId>:<count>:<time>`, so a thread's new email is new) and
+    runs `parseDepopEmails`. Non-historical notices become events
+    (dedupe `…:proton:<id>`)._
+  - _New parser rule (VERIFIED subject): "@buyer made you an offer" →
+    OFFER_RECEIVED (selling)._
+  - _Accounts shows "● Proton inbox tab: <address> · N Depop emails in
+    view"._
+  - _If no rows are recognised (layout changed), it sends
+    `depopAnchors`/`legacyRows` clues, saved to `.inspect/`._
+  - _5 new tests (32 total pass)._
+  - _**VERIFIED live after 0.8.0 (00:48Z, 2026-10-25):** 49 Depop
+    emails read from @thismysize's Proton inbox, filed under @thismysize,
+    0 alerts (all before `connectedAt` 00:44:40Z, which also proves the
+    dates parsed), no layout problems._
+  - _Not yet seen: an alert from a NEW Depop email arriving in Proton._
+  - _Never log into Proton with the user's password._
+
+_**The user's pending steps (as of the 2026-10-14 closeout). Steps 1–2
+are DONE as of 2026-10-24; step 3 is now the Proton question above. Ask
+about these first:**_
 
 1. _Reload the extension in their normal Chrome (`chrome://extensions` →
    ↻ MCC Depop Reader → **0.6.0**). Then verify on Accounts / extension
